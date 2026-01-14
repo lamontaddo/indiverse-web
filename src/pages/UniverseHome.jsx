@@ -1,24 +1,14 @@
 // src/pages/UniverseHome.jsx ✅ FULL DROP-IN (Vite React)
 // - Universe bg VIDEO via remote config URL (assets.universeBgVideoUrl preferred)
 // - Icon tiles support remote iconUrl as VIDEO or IMAGE (fallback to letter)
-// - Pull-to-refresh style replaced with a Refresh button
+// - ✅ ONE Refresh button:
+//    - Tap = refresh
+//    - Hold (1.2s) = FORCE refresh (clears remote-config cache keys + cache-bust fetch)
 // - Long-press “VaultGate” navigation (5s hold) like RN version
-//
-// Assumes you have react-router set up:
-//   <Route path="/" element={<UniverseHome />} />
-//   <Route path="/vaultgate" element={<VaultGate />} />
-//   <Route path="/profile/:profileKey" element={<ProfileHome />} />
-//   <Route path="/auth/signup" element={<AuthSignup />} />
-//
-// Requires:
-//   npm i react-router-dom
-//
-// Optional (nice): create src/services/remoteConfig.js with the fetch helper.
-// This file is self-contained, so you can drop it in as-is.
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { setRemoteConfig } from "../services/profileRegistry";
+import { setRemoteConfig } from '../services/profileRegistry';
 
 // ✅ Default Universe background video (remote)
 const DEFAULT_UNIVERSE_BG_URL =
@@ -30,52 +20,106 @@ const DEFAULT_REMOTE_CONFIG_URL =
   'https://montech-remote-config.s3.amazonaws.com/superapp/config.json';
 
 // --- helpers ---
-function clampNum(n, min, max, fallback) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(min, Math.min(max, x));
-}
-
 function isVideoUrl(url) {
   const u = String(url || '').toLowerCase().split('?')[0];
   return u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.m4v') || u.endsWith('.webm');
 }
 function isImageUrl(url) {
   const u = String(url || '').toLowerCase().split('?')[0];
-  return u.endsWith('.jpg') || u.endsWith('.jpeg') || u.endsWith('.png') || u.endsWith('.webp') || u.endsWith('.gif');
+  return (
+    u.endsWith('.jpg') ||
+    u.endsWith('.jpeg') ||
+    u.endsWith('.png') ||
+    u.endsWith('.webp') ||
+    u.endsWith('.gif')
+  );
 }
 
-async function fetchRemoteConfig({ url = DEFAULT_REMOTE_CONFIG_URL, timeoutMs = 9000 } = {}) {
+/**
+ * ✅ Clears only remote-config-ish cache keys (safe)
+ * Avoids nuking all localStorage (so auth/session keys remain).
+ */
+function clearRemoteConfigCache() {
+  try {
+    const keys = Object.keys(window.localStorage || {});
+    const cleared = [];
+
+    for (const k of keys) {
+      const kk = String(k || '').toLowerCase();
+      if (
+        kk.includes('remoteconfig') ||
+        kk.includes('remote-config') ||
+        kk.includes('profile-registry') ||
+        kk.includes('profileregistry') ||
+        kk.includes('indiverse:remote') ||
+        kk.includes('indiverse_remote')
+      ) {
+        window.localStorage.removeItem(k);
+        cleared.push(k);
+      }
+    }
+
+    // optional canonical keys (if you ever add them elsewhere)
+    window.localStorage.removeItem('indiverse:remoteConfig');
+    window.localStorage.removeItem('indiverse:remoteConfig:meta');
+
+    return cleared;
+  } catch {
+    return [];
+  }
+}
+
+function withCacheBust(url, force) {
+  const u = String(url || '').trim();
+  if (!force) return u;
+  const sep = u.includes('?') ? '&' : '?';
+  return `${u}${sep}v=${Date.now()}`;
+}
+
+async function fetchRemoteConfig({
+  url = DEFAULT_REMOTE_CONFIG_URL,
+  timeoutMs = 9000,
+  force = false,
+} = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
   try {
-    const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    const finalUrl = withCacheBust(url, force);
+
+    const res = await fetch(finalUrl, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+      headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+    });
+
     if (!res.ok) throw new Error(`remote config fetch failed: ${res.status}`);
-    const json = await res.json();
-    return json;
+    return await res.json();
   } finally {
     clearTimeout(t);
   }
 }
 
 function normalizeProfiles(cfg) {
-    const list = Array.isArray(cfg?.profiles) ? cfg.profiles : [];
-    return list
-      .map((p) => ({
-        key: p?.key || "",
-        label: p?.label || p?.name || p?.key || "Unknown",
-        enabled: p?.enabled !== false,
-  
-        // ✅ KEEP THESE (critical for profileFetch)
-        apiBaseUrl: p?.apiBaseUrl || null,
-        endpoints: p?.endpoints || null,
-  
-        assets: p?.assets || {},
-        icon: p?.icon || null,
-      }))
-      .filter((p) => p.key);
-  }
-  
+  const list = Array.isArray(cfg?.profiles) ? cfg.profiles : [];
+  return list
+    .map((p) => ({
+      key: p?.key || '',
+      label: p?.label || p?.name || p?.key || 'Unknown',
+      enabled: p?.enabled !== false,
+
+      // ✅ KEEP THESE (critical for profileFetch)
+      apiBaseUrl: p?.apiBaseUrl || null,
+      endpoints: p?.endpoints || null,
+
+      assets: p?.assets || {},
+      icon: p?.icon || null,
+    }))
+    .filter((p) => p.key);
+}
 
 // --- long press hook ---
 function useLongPress(callback, ms = 5000) {
@@ -112,9 +156,7 @@ function useLongPress(callback, ms = 5000) {
 
 const IconMedia = memo(function IconMedia({ mod }) {
   const remoteUrl = mod?.assets?.iconUrl || '';
-  const useRemote = !!remoteUrl;
-
-  if (!useRemote) {
+  if (!remoteUrl) {
     return (
       <div className="iconFallback">
         <span className="iconLetter">{(mod?.label || '?').charAt(0)}</span>
@@ -132,11 +174,6 @@ const IconMedia = memo(function IconMedia({ mod }) {
         playsInline
         autoPlay
         preload="metadata"
-        onError={() => {
-          // fallback is handled by rendering letter if remote fails
-          // but we can’t set state inside memo without adding state;
-          // simplest is to show a graceful fallback layer below:
-        }}
       />
     );
   }
@@ -168,38 +205,32 @@ export default function UniverseHome() {
     try {
       setRefreshing(true);
 
-      // on web, "force" just means no-store fetch (already set). Kept for parity.
-      const cfg = await fetchRemoteConfig({ url: DEFAULT_REMOTE_CONFIG_URL });
+      if (force) {
+        const cleared = clearRemoteConfigCache();
+        console.log('🧹 Force refresh: cleared remote-config cache keys:', cleared);
+      }
+
+      const cfg = await fetchRemoteConfig({ url: DEFAULT_REMOTE_CONFIG_URL, force });
       setRemoteConfig(cfg);
 
-      // ✅ app-level universe bg video url
       const u = cfg?.assets?.universeBgVideoUrl || cfg?.universeBgVideoUrl || null;
       if (u) setUniverseBgUrl(u);
 
-      console.log('🧾 universeBgVideoUrl:', u || '(default)', universeBgUrl);
-      console.log('🧾 cfg.profiles[0].assets.iconUrl:', cfg?.profiles?.[0]?.assets?.iconUrl);
+      const after = normalizeProfiles(cfg).filter((p) => p.enabled !== false);
+      setModules(after);
 
       console.log('✅ remote config loaded:', {
         version: cfg?.version,
         mode: cfg?.mode,
-        profiles: (cfg?.profiles || []).map((p) => p?.key).filter(Boolean),
+        profiles: after.map((p) => p.key),
       });
-
-      const after = normalizeProfiles(cfg).filter((p) => p.enabled !== false);
-
-      console.log('✅ registry profiles AFTER:', after.map((p) => p.key));
-      const lamont = after.find((p) => p.key === 'lamont');
-      console.log('🧾 lamont iconUrl:', lamont?.assets?.iconUrl);
-
-      setModules(after);
     } catch (e) {
       console.log('Remote config failed (using fallback empty list):', e?.message);
-      // keep default universeBgUrl
       setModules([]);
     } finally {
       setRefreshing(false);
     }
-  }, [universeBgUrl]);
+  }, []);
 
   useEffect(() => {
     syncRemoteProfiles({ force: true });
@@ -217,6 +248,14 @@ export default function UniverseHome() {
   }, []);
 
   const longPressVault = useLongPress(() => navigate('/vaultgate'), 5000);
+
+  // ✅ ONE refresh button: tap vs hold
+  const handleRefresh = useCallback(() => syncRemoteProfiles({ force: false }), [syncRemoteProfiles]);
+  const handleForceRefresh = useCallback(
+    () => syncRemoteProfiles({ force: true }),
+    [syncRemoteProfiles]
+  );
+  const longPressRefresh = useLongPress(handleForceRefresh, 1200);
 
   const tilePulseStyle = useMemo(
     () => ({
@@ -240,7 +279,15 @@ export default function UniverseHome() {
     <div className="root">
       {/* Background video */}
       {universeBgUrl ? (
-        <video className="bgVideo" src={universeBgUrl} muted loop autoPlay playsInline preload="metadata" />
+        <video
+          className="bgVideo"
+          src={universeBgUrl}
+          muted
+          loop
+          autoPlay
+          playsInline
+          preload="metadata"
+        />
       ) : (
         <div className="bgFallback" />
       )}
@@ -252,7 +299,8 @@ export default function UniverseHome() {
             <div className="title">indiVerse</div>
 
             <div className="subtitle">
-              Choose a world to enter. Each app is its own universe, with its own vibe, music, and people.
+              Choose a world to enter. Each app is its own universe, with its own vibe, music, and
+              people.
             </div>
 
             <div className="pillRow">
@@ -265,7 +313,13 @@ export default function UniverseHome() {
                 </div>
               </div>
 
-              <button className="refreshBtn" onClick={() => syncRemoteProfiles({ force: true })} disabled={refreshing}>
+              <button
+                className="refreshBtn"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                {...longPressRefresh}
+                title="Tap to refresh • Hold to force refresh"
+              >
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
             </div>
@@ -276,10 +330,8 @@ export default function UniverseHome() {
               <button key={mod.key} className="iconTile" onClick={() => handleEnterProfile(mod.key)}>
                 <div className="iconOuterGradient" style={tilePulseStyle}>
                   <div className="iconOuter">
-                    {/* Media container */}
                     <div className="mediaClip">
                       <IconMedia mod={mod} />
-                      {/* soft fallback overlay if remote fails to paint */}
                       <div className="mediaFallbackOverlay" aria-hidden />
                     </div>
                   </div>
