@@ -1,0 +1,33 @@
+/* src/index.css ✅ FULL DROP-IN (fixes left-pin + centers app) */
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+}
+
+body {
+  background: #000;
+  color: #fff;
+  /* ✅ IMPORTANT: remove Vite starter flex that pins content left */
+  display: block;
+}
+
+/* ✅ IMPORTANT: Vite starter often constrains/centers weirdly */
+#root {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
