@@ -1,9 +1,17 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const IS_GITHUB_PAGES =
+  typeof process !== 'undefined' &&
+  process.env &&
+  process.env.GITHUB_PAGES === 'true';
+
 export default defineConfig({
-  base: '/indiverse-web/', // ✅ IMPORTANT for GitHub Pages repo site
   plugins: [react()],
+
+  // ✅ IMPORTANT for GitHub Pages
+  base: IS_GITHUB_PAGES ? '/indiverse-web/' : '/',
+
   server: {
     proxy: {
       '/api': {
