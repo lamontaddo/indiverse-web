@@ -72,7 +72,6 @@ function Stub({ name }) {
         Stub page. Replace with a real screen.
       </p>
 
-      {/* Use Link so HashRouter stays happy */}
       <Link to="/" style={{ color: "#0ff" }}>
         ← Back to Universe
       </Link>
@@ -200,7 +199,6 @@ export default function App() {
             path="/world/:profileKey/owner/home"
             element={<OwnerHomePage />}
           />
-
           <Route
             path="/world/:profileKey/owner/about"
             element={<OwnerAboutPage />}
@@ -241,7 +239,10 @@ export default function App() {
             path="/world/:profileKey/owner/music"
             element={<OwnerMusicPage />}
           />
-          <Route path="/world/:profileKey/owner/portfolio" element={<OwnerPortfolioPage />} />
+          <Route
+            path="/world/:profileKey/owner/portfolio"
+            element={<OwnerPortfolioPage />}
+          />
 
           <Route path="/portal/:profileKey" element={<LinkPortalPage />} />
           <Route path="/portal/:profileKey/:portalKey" element={<LinkPortalPage />} />
