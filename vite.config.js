@@ -2,11 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  base: '/indiverse-web/', // ✅ IMPORTANT for GitHub Pages repo site
   plugins: [react()],
-
-  // ✅ GitHub Pages (repo name = indiverse-web)
-  base: '/indiverse-web/',
-
   server: {
     proxy: {
       '/api': {
