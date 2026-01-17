@@ -1,23 +1,35 @@
-// src/pages/OwnerFashionPage.jsx ✅ FULL DROP-IN (WEB)
+// src/pages/OwnerFashionPage.jsx ✅ FULL DROP-IN (WEB) — HARDENED + ABSOLUTE API
 // Route: /world/:profileKey/owner/fashion
 //
 // ✅ Brand = input
 // ✅ Type = dropdown
 // ✅ Tag = dropdown + "Add custom…"
 // ✅ StyleNote kept
-// ✅ Removes "description" field (less typing)
-// ✅ Uses ownerFetch(path, { profileKey, ... }) so x-profile-key is always sent
-// ✅ Accepts API shapes: raw array OR { ok, items }
+// ✅ Removes "description" field
+// ✅ Uses ownerFetchRawWeb (absolute backend base, avoids indiverse-web /api 404)
+// ✅ Accepts API shapes: raw array OR { ok, items } OR { items }
 // ✅ Normalizes items to include id + _id for safe rendering + deletes
 // ✅ Fixes delete path so it never calls /api/owner/fashion/ (missing id)
 // ✅ REQUIRES profileKey (no silent fallback)
+// ✅ 401/403 redirects to /world/:profileKey/owner/login
+//
+// Requires:
+// - ownerFetchRawWeb + normalizeProfileKey from ../utils/ownerApi.web
+// - (optional) getProfileByKey if you want branding; not required here
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { ownerFetch } from "../services/ownerFetch"; // ✅ adjust if your path differs
+import { ownerFetchRawWeb, normalizeProfileKey } from "../utils/ownerApi.web";
 
 function normalizeList(data) {
-  const list = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.data)
+    ? data.data
+    : [];
+
   return list
     .map((x) => {
       const id = String(x?._id || x?.id || "").trim();
@@ -34,7 +46,7 @@ function isProbablyVideoUrl(u) {
 function uniqStrings(arr) {
   const out = [];
   const seen = new Set();
-  arr.forEach((v) => {
+  (arr || []).forEach((v) => {
     const s = String(v || "").trim();
     if (!s) return;
     const key = s.toLowerCase();
@@ -55,7 +67,12 @@ function Modal({ open, title, children, onClose, footer }) {
   if (!open) return null;
   return (
     <div style={ui.modalOverlay} onMouseDown={onClose} role="presentation">
-      <div style={ui.modalCard} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div
+        style={ui.modalCard}
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
         <div style={ui.modalTitle}>{title}</div>
         <div style={ui.modalBody}>{children}</div>
         {footer ? <div style={{ marginTop: 12 }}>{footer}</div> : null}
@@ -71,7 +88,7 @@ function SelectModal({ open, title, options, selected, onSelect, onClose, footer
   return (
     <Modal open={open} title={title} onClose={onClose} footer={footer}>
       <div style={{ maxHeight: 360, overflowY: "auto" }}>
-        {options.map((opt) => {
+        {(options || []).map((opt) => {
           const active = String(opt.value) === String(selected);
           return (
             <button
@@ -79,11 +96,14 @@ function SelectModal({ open, title, options, selected, onSelect, onClose, footer
               onClick={() => onSelect(opt.value)}
               style={{ ...ui.modalRow, ...(active ? ui.modalRowActive : null) }}
             >
-              <span style={{ ...ui.modalRowText, ...(active ? ui.modalRowTextActive : null) }}>{opt.label}</span>
+              <span style={{ ...ui.modalRowText, ...(active ? ui.modalRowTextActive : null) }}>
+                {opt.label}
+              </span>
               {active ? <span style={{ opacity: 0.9 }}>✓</span> : null}
             </button>
           );
         })}
+        {options?.length ? null : <div style={{ color: "#9ca3af", fontSize: 12 }}>—</div>}
       </div>
     </Modal>
   );
@@ -107,8 +127,7 @@ export default function OwnerFashionPage() {
   const params = useParams();
   const location = useLocation();
 
-  // ✅ REQUIRE profileKey from route
-  const profileKey = clampStr(params?.profileKey).toLowerCase();
+  const profileKey = normalizeProfileKey(params?.profileKey);
 
   const [brand, setBrand] = useState("");
   const [name, setName] = useState("");
@@ -123,6 +142,9 @@ export default function OwnerFashionPage() {
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
+  // keep bgUrl if passed
+  const bgUrl = location?.state?.bgUrl || null;
+
   // pickers
   const [typePickerOpen, setTypePickerOpen] = useState(false);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
@@ -136,6 +158,15 @@ export default function OwnerFashionPage() {
     setToast({ type, message });
     window.clearTimeout(showToast._t);
     showToast._t = window.setTimeout(() => setToast(null), 2400);
+  };
+
+  const goOwnerLogin = (k) => {
+    const pk = normalizeProfileKey(k || profileKey);
+    if (!pk) return nav("/", { replace: true });
+    nav(`/world/${encodeURIComponent(pk)}/owner/login`, {
+      replace: true,
+      state: { profileKey: pk, bgUrl },
+    });
   };
 
   const resetForm = () => {
@@ -187,9 +218,25 @@ export default function OwnerFashionPage() {
 
     (async () => {
       try {
-        const res = await ownerFetch("/api/owner/fashion", { profileKey, signal: ctrl.signal });
+        const res = await ownerFetchRawWeb("/api/owner/fashion", {
+          profileKey,
+          method: "GET",
+          signal: ctrl.signal,
+        });
+
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || "Failed to load fashion items.");
+
+        if (res.status === 401 || res.status === 403) {
+          if (mounted) {
+            setItems([]);
+            setLoadingList(false);
+          }
+          goOwnerLogin(profileKey);
+          return;
+        }
+
+        if (!res.ok || data?.ok === false) throw new Error(data?.error || "Failed to load fashion items.");
+
         const list = normalizeList(data);
         if (mounted) setItems(list);
       } catch (err) {
@@ -206,30 +253,22 @@ export default function OwnerFashionPage() {
       mounted = false;
       ctrl.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileKey]);
 
   // ✅ Add
   const handleAddItem = async () => {
-    if (!profileKey) {
-      showToast("error", "Missing profileKey.");
-      return;
-    }
+    if (!profileKey) return showToast("error", "Missing profileKey.");
 
-    const trimmedBrand = brand.trim();
-    const trimmedName = name.trim();
-    const trimmedType = pieceType.trim();
-    const trimmedTag = tag.trim();
-    const trimmedNote = styleNote.trim();
-    const url = mediaUrl.trim();
+    const trimmedBrand = clampStr(brand);
+    const trimmedName = clampStr(name);
+    const trimmedType = clampStr(pieceType);
+    const trimmedTag = clampStr(tag);
+    const trimmedNote = clampStr(styleNote);
+    const url = clampStr(mediaUrl);
 
-    if (!trimmedBrand || !trimmedName || !trimmedType) {
-      showToast("error", "Brand, name, and type are required.");
-      return;
-    }
-    if (!url) {
-      showToast("error", "Paste an image/video URL.");
-      return;
-    }
+    if (!trimmedBrand || !trimmedName || !trimmedType) return showToast("error", "Brand, name, and type are required.");
+    if (!url) return showToast("error", "Paste an image/video URL.");
     if (saving) return;
 
     try {
@@ -246,17 +285,19 @@ export default function OwnerFashionPage() {
         video: isProbablyVideoUrl(url) ? url : null,
       };
 
-      const res = await ownerFetch("/api/owner/fashion", {
+      const res = await ownerFetchRawWeb("/api/owner/fashion", {
         profileKey,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Failed to add fashion item.");
 
-      const saved = normalizeList([data])[0];
+      if (res.status === 401 || res.status === 403) return goOwnerLogin(profileKey);
+
+      if (!res.ok || data?.ok === false) throw new Error(data?.error || "Failed to add fashion item.");
+
+      const saved = normalizeList([data?.item || data?.data || data])[0];
       if (!saved) throw new Error("Save succeeded but item was invalid.");
 
       setItems((prev) => [saved, ...prev]);
@@ -267,6 +308,7 @@ export default function OwnerFashionPage() {
       console.error("OwnerFashionPage save error:", err);
       setError(err?.message || "Failed to add fashion item.");
       showToast("error", err?.message || "Failed to add fashion item.");
+      if (String(err?.message || "").toLowerCase().includes("unauthorized")) goOwnerLogin(profileKey);
     } finally {
       setSaving(false);
     }
@@ -274,34 +316,32 @@ export default function OwnerFashionPage() {
 
   // ✅ Delete
   const handleDeleteItem = async (rawId) => {
-    if (!profileKey) {
-      showToast("error", "Missing profileKey.");
-      return;
-    }
+    if (!profileKey) return showToast("error", "Missing profileKey.");
 
     const targetId = String(rawId || "").trim();
-    if (!targetId) {
-      showToast("error", "Delete failed: missing id.");
-      return;
-    }
+    if (!targetId) return showToast("error", "Delete failed: missing id.");
 
     const ok = window.confirm("Delete piece?\n\nThis will remove it from your fashion list.");
     if (!ok) return;
 
     try {
-      const res = await ownerFetch(`/api/owner/fashion/${encodeURIComponent(targetId)}`, {
+      const res = await ownerFetchRawWeb(`/api/owner/fashion/${encodeURIComponent(targetId)}`, {
         profileKey,
         method: "DELETE",
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Failed to delete fashion item.");
+
+      if (res.status === 401 || res.status === 403) return goOwnerLogin(profileKey);
+
+      if (!res.ok || data?.ok === false) throw new Error(data?.error || "Failed to delete fashion item.");
 
       setItems((prev) => prev.filter((x) => String(x._id || x.id) !== targetId));
       showToast("success", "Piece removed");
     } catch (err) {
       console.error("OwnerFashionPage delete error:", err);
       showToast("error", err?.message || "Failed to delete fashion item.");
+      if (String(err?.message || "").toLowerCase().includes("unauthorized")) goOwnerLogin(profileKey);
     }
   };
 
@@ -346,11 +386,18 @@ export default function OwnerFashionPage() {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={ui.title}>Owner Fashion</div>
-          <div style={ui.subtitle}>Add a piece in under 20 seconds.</div>
-          {!canUseApi ? <div style={ui.subtitle}>Missing profileKey for this page.</div> : null}
+          <div style={ui.subtitle}>Brand • Type • Tag • Media</div>
+          {!canUseApi ? <div style={{ ...ui.subtitle, color: "#fca5a5" }}>Missing profileKey for this page.</div> : null}
         </div>
 
-        <div style={{ width: 40 }} />
+        <button
+          style={{ ...ui.refreshBtn, opacity: !canUseApi || loadingList ? 0.55 : 1 }}
+          onClick={() => canUseApi && window.location.reload()}
+          disabled={!canUseApi || loadingList}
+          title="Refresh"
+        >
+          ⟳
+        </button>
       </div>
 
       {!profileKey ? (
@@ -370,35 +417,25 @@ export default function OwnerFashionPage() {
         {/* Brand */}
         <div style={ui.label}>Brand</div>
         <div style={ui.inputWrap}>
-          <input
-            value={brand}
-            onChange={(e) => setBrand(e.target.value)}
-            style={ui.input}
-            placeholder="Ralph Lauren, ANTA, etc."
-          />
+          <input value={brand} onChange={(e) => setBrand(e.target.value)} style={ui.input} placeholder="Ralph Lauren, ANTA, etc." />
         </div>
 
         {/* Name */}
         <div style={{ ...ui.label, marginTop: 12 }}>Name</div>
         <div style={ui.inputWrap}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            style={ui.input}
-            placeholder="Cable-Knit Sweater, Hela Roots..."
-          />
+          <input value={name} onChange={(e) => setName(e.target.value)} style={ui.input} placeholder="Cable-Knit Sweater, Hela Roots..." />
         </div>
 
         {/* Type */}
         <div style={{ ...ui.label, marginTop: 12 }}>Type</div>
-        <button style={ui.pickerWrap} onClick={() => setTypePickerOpen(true)}>
+        <button style={ui.pickerWrap} onClick={() => setTypePickerOpen(true)} disabled={!canUseApi}>
           <span style={{ ...ui.pickerText, ...(pieceType ? null : ui.pickerPlaceholder) }}>{typeLabel}</span>
           <span style={{ opacity: 0.9 }}>▾</span>
         </button>
 
         {/* Tag */}
         <div style={{ ...ui.label, marginTop: 12 }}>Tag</div>
-        <button style={ui.pickerWrap} onClick={() => setTagPickerOpen(true)}>
+        <button style={ui.pickerWrap} onClick={() => setTagPickerOpen(true)} disabled={!canUseApi}>
           <span style={{ ...ui.pickerText, ...(tag ? null : ui.pickerPlaceholder) }}>{tagLabel}</span>
           <span style={{ opacity: 0.9 }}>▾</span>
         </button>
@@ -406,61 +443,47 @@ export default function OwnerFashionPage() {
         {/* Style note */}
         <div style={{ ...ui.label, marginTop: 12 }}>Style note</div>
         <div style={ui.inputWrapMultiline}>
-          <textarea
-            value={styleNote}
-            onChange={(e) => setStyleNote(e.target.value)}
-            style={ui.textarea}
-            placeholder="How you wear it, why it matters…"
-            rows={3}
-          />
+          <textarea value={styleNote} onChange={(e) => setStyleNote(e.target.value)} style={ui.textarea} placeholder="How you wear it, why it matters…" rows={3} />
         </div>
 
         {/* Media URL */}
         <div style={{ ...ui.label, marginTop: 12 }}>Media URL</div>
         <div style={ui.inputWrap}>
-          <input
-            value={mediaUrl}
-            onChange={(e) => setMediaUrl(e.target.value)}
-            style={ui.input}
-            placeholder="Paste image or video URL (mp4, mov...)"
-          />
+          <input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} style={ui.input} placeholder="Paste image or video URL (mp4, mov...)" />
         </div>
 
-        <button
-          onClick={handleAddItem}
-          disabled={!canUseApi || saving}
-          style={{
-            ...ui.saveBtn,
-            opacity: !canUseApi || saving ? 0.6 : 1,
-          }}
-        >
+        <button onClick={handleAddItem} disabled={!canUseApi || saving} style={{ ...ui.saveBtn, opacity: !canUseApi || saving ? 0.6 : 1 }}>
           {saving ? "Saving…" : "Add Piece"}
         </button>
 
         <div style={{ ...ui.sectionTitle, marginTop: 18 }}>Current pieces</div>
 
         {loadingList ? (
-          <div style={ui.loadingRow}>Loading pieces…</div>
+          <div style={ui.loadingRow}>
+            <div className="spinner" />
+            <div style={{ color: "#9ca3af" }}>Loading pieces…</div>
+          </div>
         ) : items.length === 0 ? (
           <div style={ui.emptyText}>No pieces yet. Add one above.</div>
         ) : (
           <div style={ui.list}>
             {items.map((item) => {
               const itemId = String(item._id || item.id || "").trim();
-              const mediaLabel = item.video ? "Video" : item.image ? "Image" : "Unknown";
               return (
                 <div key={itemId} style={ui.itemCard}>
                   <div style={ui.itemRow}>
                     <div style={ui.monogram}>{(item.brand?.[0] || "F").toUpperCase()}</div>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={ui.itemTitle}>{item.name}</div>
-                      <div style={ui.itemMeta}>
+                      <div style={ui.itemTitle} title={item.name}>
+                        {item.name}
+                      </div>
+                      <div style={ui.itemMeta} title={`${item.brand} • ${item.type}${item.tag ? ` • ${item.tag}` : ""}`}>
                         {item.brand} • {item.type}
                         {item.tag ? ` • ${item.tag}` : ""}
                       </div>
                       {item.styleNote ? <div style={ui.itemNote}>{item.styleNote}</div> : null}
-                      <div style={ui.itemMedia}>{mediaLabel}</div>
+                      <div style={ui.itemMedia}>{item.video ? "Video" : item.image ? "Image" : "Media"}</div>
                     </div>
 
                     <button style={ui.deleteBtn} onClick={() => handleDeleteItem(itemId)} title="Delete">
@@ -508,8 +531,8 @@ export default function OwnerFashionPage() {
       <SelectModal
         open={customTagOpen}
         title="Custom tag"
-        options={[]}
-        selected={null}
+        options={[{ label: "Use custom tag below", value: "__noop__" }]}
+        selected={"__noop__"}
         onSelect={() => {}}
         onClose={() => {
           setCustomTagOpen(false);
@@ -520,8 +543,6 @@ export default function OwnerFashionPage() {
     </div>
   );
 }
-
-/* -------------------- styles -------------------- */
 
 const ui = {
   page: {
@@ -554,6 +575,16 @@ const ui = {
     fontWeight: 900,
     cursor: "pointer",
   },
+  refreshBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.08)",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
   title: { fontSize: 18, fontWeight: 900, letterSpacing: 0.6, color: "#fff" },
   subtitle: { marginTop: 4, fontSize: 12, color: "#9ca3af" },
 
@@ -567,52 +598,15 @@ const ui = {
   missingTitle: { color: "#fecaca", fontWeight: 900, fontSize: 13 },
   missingText: { marginTop: 6, color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 600 },
 
-  body: {
-    padding: "16px 18px 40px",
-    maxWidth: 860,
-    margin: "0 auto",
-  },
+  body: { padding: "16px 18px 40px", maxWidth: 860, margin: "0 auto" },
 
-  label: {
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    color: "#9ca3af",
-    marginBottom: 6,
-  },
+  label: { fontSize: 12, textTransform: "uppercase", letterSpacing: 1.2, color: "#9ca3af", marginBottom: 6, fontWeight: 800 },
 
-  inputWrap: {
-    borderRadius: 999,
-    border: "1px solid #374151",
-    background: "rgba(15,23,42,0.70)",
-    overflow: "hidden",
-  },
-  inputWrapMultiline: {
-    borderRadius: 18,
-    border: "1px solid #374151",
-    background: "rgba(15,23,42,0.70)",
-    overflow: "hidden",
-  },
-  input: {
-    width: "100%",
-    padding: "12px 14px",
-    outline: "none",
-    border: "none",
-    background: "transparent",
-    color: "#f9fafb",
-    fontSize: 14,
-  },
-  textarea: {
-    width: "100%",
-    padding: "12px 14px",
-    outline: "none",
-    border: "none",
-    background: "transparent",
-    color: "#f9fafb",
-    fontSize: 14,
-    lineHeight: "20px",
-    resize: "vertical",
-  },
+  inputWrap: { borderRadius: 999, border: "1px solid #374151", background: "rgba(15,23,42,0.70)", overflow: "hidden" },
+  inputWrapMultiline: { borderRadius: 18, border: "1px solid #374151", background: "rgba(15,23,42,0.70)", overflow: "hidden" },
+
+  input: { width: "100%", padding: "12px 14px", outline: "none", border: "none", background: "transparent", color: "#f9fafb", fontSize: 14 },
+  textarea: { width: "100%", padding: "12px 14px", outline: "none", border: "none", background: "transparent", color: "#f9fafb", fontSize: 14, lineHeight: "20px", resize: "vertical" },
 
   pickerWrap: {
     width: "100%",
@@ -626,7 +620,7 @@ const ui = {
     justifyContent: "space-between",
     cursor: "pointer",
   },
-  pickerText: { fontSize: 14 },
+  pickerText: { fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   pickerPlaceholder: { color: "#6b7280" },
 
   saveBtn: {
@@ -642,92 +636,32 @@ const ui = {
     color: "#052e16",
   },
 
-  sectionTitle: {
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    color: "#e5e7eb",
-    fontWeight: 800,
-  },
+  sectionTitle: { fontSize: 12, textTransform: "uppercase", letterSpacing: 1.2, color: "#e5e7eb", fontWeight: 900 },
 
-  loadingRow: { marginTop: 10, color: "#9ca3af" },
+  loadingRow: { marginTop: 10, color: "#9ca3af", display: "flex", alignItems: "center", gap: 10 },
   emptyText: { marginTop: 10, color: "#6b7280" },
 
   list: { marginTop: 10, display: "grid", gap: 10 },
 
-  itemCard: {
-    borderRadius: 16,
-    border: "1px solid #374151",
-    background: "rgba(15,23,42,0.86)",
-    padding: 12,
-  },
+  itemCard: { borderRadius: 16, border: "1px solid #374151", background: "rgba(15,23,42,0.86)", padding: 12 },
   itemRow: { display: "flex", alignItems: "center", gap: 12 },
-  monogram: {
-    width: 38,
-    height: 38,
-    borderRadius: 999,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 900,
-    color: "#e5e7eb",
-    background: "rgba(59,130,246,0.25)",
-    border: "1px solid rgba(129,140,248,0.65)",
-    flex: "0 0 auto",
-  },
-  itemTitle: { color: "#fff", fontWeight: 800, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  monogram: { width: 38, height: 38, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, color: "#e5e7eb", background: "rgba(59,130,246,0.25)", border: "1px solid rgba(129,140,248,0.65)", flex: "0 0 auto" },
+
+  itemTitle: { color: "#fff", fontWeight: 900, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   itemMeta: { marginTop: 2, color: "#cbd5f5", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   itemNote: { marginTop: 6, color: "#9ca3af", fontSize: 12, lineHeight: "18px" },
   itemMedia: { marginTop: 6, color: "#6b7280", fontSize: 11, letterSpacing: 0.4 },
 
-  deleteBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 999,
-    border: "1px solid rgba(248,113,113,0.7)",
-    background: "rgba(239,68,68,0.10)",
-    color: "#fecaca",
-    cursor: "pointer",
-    flex: "0 0 auto",
-  },
+  deleteBtn: { width: 38, height: 38, borderRadius: 999, border: "1px solid rgba(248,113,113,0.7)", background: "rgba(239,68,68,0.10)", color: "#fecaca", cursor: "pointer", flex: "0 0 auto" },
 
-  errorBox: {
-    marginBottom: 10,
-    padding: 12,
-    borderRadius: 14,
-    border: "1px solid rgba(248,113,113,0.7)",
-    background: "rgba(248,113,113,0.08)",
-  },
-  errorText: { color: "#fecaca", fontWeight: 800, fontSize: 13 },
+  errorBox: { marginBottom: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(248,113,113,0.7)", background: "rgba(248,113,113,0.08)" },
+  errorText: { color: "#fecaca", fontWeight: 900, fontSize: 13 },
 
-  // modal
-  modalOverlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.58)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 16,
-    zIndex: 999,
-  },
-  modalCard: {
-    width: "min(560px, 92vw)",
-    borderRadius: 18,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(15,23,42,0.98)",
-    padding: 14,
-    boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
-  },
-  modalTitle: {
-    color: "#fff",
-    fontWeight: 900,
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    fontSize: 13,
-    marginBottom: 10,
-  },
+  modalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.58)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 999 },
+  modalCard: { width: "min(560px, 92vw)", borderRadius: 18, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(15,23,42,0.98)", padding: 14, boxShadow: "0 24px 60px rgba(0,0,0,0.55)" },
+  modalTitle: { color: "#fff", fontWeight: 900, letterSpacing: 1, textTransform: "uppercase", fontSize: 13, marginBottom: 10 },
   modalBody: {},
+
   modalRow: {
     width: "100%",
     textAlign: "left",
@@ -743,76 +677,32 @@ const ui = {
     justifyContent: "space-between",
     gap: 12,
   },
-  modalRowActive: {
-    background: "rgba(59,130,246,0.18)",
-    border: "1px solid rgba(129,140,248,0.55)",
-  },
-  modalRowText: { fontWeight: 700, fontSize: 13 },
+  modalRowActive: { background: "rgba(59,130,246,0.18)", border: "1px solid rgba(129,140,248,0.55)" },
+  modalRowText: { fontWeight: 800, fontSize: 13 },
   modalRowTextActive: { color: "#fff" },
-  modalCloseBtn: {
-    marginTop: 12,
-    width: "100%",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.08)",
-    color: "#e5e7eb",
-    padding: "10px 12px",
-    fontWeight: 900,
-    cursor: "pointer",
-  },
 
-  modalHelper: { color: "#cbd5f5", fontSize: 12, marginBottom: 8, fontWeight: 700 },
+  modalCloseBtn: { marginTop: 12, width: "100%", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.08)", color: "#e5e7eb", padding: "10px 12px", fontWeight: 900, cursor: "pointer" },
+
+  modalHelper: { color: "#cbd5f5", fontSize: 12, marginBottom: 8, fontWeight: 800 },
   customTagRow: { display: "flex", gap: 10, alignItems: "center" },
-  customTagInput: {
-    flex: 1,
-    height: 42,
-    borderRadius: 12,
-    padding: "0 12px",
-    color: "#f9fafb",
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(2,6,23,0.35)",
-    outline: "none",
-  },
-  customTagAddBtn: {
-    height: 42,
-    padding: "0 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(34,197,94,0.5)",
-    background: "rgba(34,197,94,0.18)",
-    color: "#bbf7d0",
-    fontWeight: 900,
-    cursor: "pointer",
-  },
+  customTagInput: { flex: 1, height: 42, borderRadius: 12, padding: "0 12px", color: "#f9fafb", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(2,6,23,0.35)", outline: "none" },
+  customTagAddBtn: { height: 42, padding: "0 14px", borderRadius: 12, border: "1px solid rgba(34,197,94,0.5)", background: "rgba(34,197,94,0.18)", color: "#bbf7d0", fontWeight: 900, cursor: "pointer" },
 
-  toast: {
-    position: "fixed",
-    right: 16,
-    top: 16,
-    zIndex: 1000,
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "10px 14px",
-    borderRadius: 999,
-    boxShadow: "0 18px 40px rgba(0,0,0,0.45)",
-    border: "1px solid rgba(255,255,255,0.12)",
-  },
-  toastIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 999,
-    background: "rgba(255,255,255,0.88)",
-    color: "#111827",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 900,
-    flex: "0 0 auto",
-  },
-  toastText: { color: "#ecfdf5", fontWeight: 800, fontSize: 13 },
+  toast: { position: "fixed", right: 16, top: 16, zIndex: 1000, display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 999, boxShadow: "0 18px 40px rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.12)" },
+  toastIcon: { width: 22, height: 22, borderRadius: 999, background: "rgba(255,255,255,0.88)", color: "#111827", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, flex: "0 0 auto" },
+  toastText: { color: "#ecfdf5", fontWeight: 900, fontSize: 13 },
 
   css: () => `
     * { box-sizing: border-box; }
     button { font-family: inherit; }
+    .spinner{
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: rgba(255,255,255,0.85);
+      border-radius: 999px;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   `,
 };
