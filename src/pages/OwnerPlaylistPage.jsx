@@ -1,4 +1,4 @@
-// src/pages/OwnerPlaylistPage.jsx ✅ FULL DROP-IN (Web) — HARDENED
+// src/pages/OwnerPlaylistPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + ABSOLUTE API
 // Route: /world/:profileKey/owner/playlist
 //
 // Hits:
@@ -13,34 +13,16 @@
 // ✅ res.ok checks everywhere
 // ✅ Dedupe by id
 // ✅ 401/403 redirects to owner login (web)
+// ✅ Uses ownerFetchRawWeb (absolute backend base, avoids indiverse-web /api 404)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getProfileByKey } from "../services/profileRegistry";
-
-function normalizeProfileKey(pk) {
-  return String(pk || "").trim().toLowerCase();
-}
+import { ownerFetchRawWeb, normalizeProfileKey } from "../utils/ownerApi.web";
 
 function getActiveProfileKeyWeb() {
   try {
     return normalizeProfileKey(localStorage.getItem("profileKey"));
-  } catch {
-    return "";
-  }
-}
-
-function ownerTokenKey(profileKey) {
-  return `ownerToken:${normalizeProfileKey(profileKey)}`;
-}
-
-function getOwnerToken(profileKey) {
-  try {
-    return (
-      localStorage.getItem(ownerTokenKey(profileKey)) ||
-      localStorage.getItem("ownerToken") ||
-      ""
-    );
   } catch {
     return "";
   }
@@ -52,24 +34,6 @@ async function readJsonSafe(res) {
   } catch {
     return {};
   }
-}
-
-// ✅ web version of ownerFetchRaw (no throw, returns Response)
-async function ownerFetchRawWeb(path, { profileKey, method = "GET", body } = {}) {
-  const pk = normalizeProfileKey(profileKey);
-  const token = getOwnerToken(pk);
-
-  const res = await fetch(path, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      "x-profile-key": pk,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body,
-  });
-
-  return res;
 }
 
 function normalizeItem(x) {
@@ -89,7 +53,13 @@ function normalizeItem(x) {
 }
 
 function normalizeList(data) {
-  const raw = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+  const raw = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.items)
+    ? data.items
+    : Array.isArray(data?.tracks)
+    ? data.tracks
+    : [];
   const seen = new Set();
   const out = [];
 
@@ -192,7 +162,40 @@ export default function OwnerPlaylistPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeProfileKey]);
 
-  // Load tracks
+  const loadTracks = useCallback(async () => {
+    if (!profileKey) {
+      setLoadingList(false);
+      setTracks([]);
+      setError("Missing profileKey. Open this page with /world/:profileKey/owner/playlist.");
+      return;
+    }
+
+    setError(null);
+    setLoadingList(true);
+
+    try {
+      const res = await ownerFetchRawWeb("/api/owner/tracks", { profileKey, method: "GET" });
+      const data = await readJsonSafe(res);
+
+      if (res.status === 401 || res.status === 403) {
+        setError("Session expired. Please log in again.");
+        goOwnerLogin(profileKey);
+        return;
+      }
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || data?.message || "Failed to load tracks.");
+      }
+
+      setTracks(normalizeList(data));
+    } catch (err) {
+      setError(err?.message || "Failed to load tracks.");
+    } finally {
+      setLoadingList(false);
+    }
+  }, [profileKey, goOwnerLogin]);
+
+  // Load tracks (on mount)
   useEffect(() => {
     if (!profileReady) return;
 
@@ -203,44 +206,8 @@ export default function OwnerPlaylistPage() {
       return;
     }
 
-    let mounted = true;
-
-    (async () => {
-      try {
-        setError(null);
-        setLoadingList(true);
-
-        const res = await ownerFetchRawWeb("/api/owner/tracks", { profileKey });
-        const data = await readJsonSafe(res);
-
-        if (res.status === 401 || res.status === 403) {
-          if (mounted) {
-            setError("Session expired. Please log in again.");
-            setLoadingList(false);
-          }
-          goOwnerLogin(profileKey);
-          return;
-        }
-
-        if (!res.ok) {
-          const msg = data?.error || data?.message || "Failed to load tracks.";
-          throw new Error(msg);
-        }
-
-        const list = normalizeList(data);
-        if (mounted) setTracks(list);
-      } catch (err) {
-        if (!mounted) return;
-        setError(err?.message || "Failed to load tracks.");
-      } finally {
-        if (mounted) setLoadingList(false);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [profileReady, profileKey, goOwnerLogin]);
+    loadTracks();
+  }, [profileReady, profileKey, loadTracks]);
 
   const handleAddTrack = async () => {
     const url = String(spotifyUrl || "").trim();
@@ -271,7 +238,7 @@ export default function OwnerPlaylistPage() {
         return;
       }
 
-      if (!res.ok) {
+      if (!res.ok || savedRaw?.ok === false) {
         const msg = savedRaw?.error || savedRaw?.message || "Failed to add track.";
         throw new Error(msg);
       }
@@ -316,7 +283,7 @@ export default function OwnerPlaylistPage() {
         return;
       }
 
-      if (!res.ok) {
+      if (!res.ok || data?.ok === false) {
         const msg = data?.error || data?.message || "Failed to delete track.";
         throw new Error(msg);
       }
@@ -350,7 +317,14 @@ export default function OwnerPlaylistPage() {
           ) : null}
         </div>
 
-        <div style={{ width: 42 }} />
+        <button
+          style={{ ...styles.ghostBtn, opacity: loadingList ? 0.7 : 1 }}
+          onClick={loadTracks}
+          disabled={!canUseApi || loadingList}
+          title="Refresh"
+        >
+          ⟳
+        </button>
       </div>
 
       {/* Error banner */}
@@ -456,10 +430,7 @@ export default function OwnerPlaylistPage() {
         <div
           style={{
             ...styles.toast,
-            background:
-              toast.type === "success"
-                ? "rgba(22,163,74,0.96)"
-                : "rgba(239,68,68,0.96)",
+            background: toast.type === "success" ? "rgba(22,163,74,0.96)" : "rgba(239,68,68,0.96)",
           }}
         >
           <div style={styles.toastDot}>{toast.type === "success" ? "✓" : "!"}</div>
@@ -493,6 +464,16 @@ const styles = {
     border: "1px solid rgba(55,65,81,0.9)",
     background: "rgba(15,23,42,0.9)",
     color: "#e5e7eb",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  ghostBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,255,255,0.08)",
+    color: "#fff",
     fontWeight: 900,
     cursor: "pointer",
   },
