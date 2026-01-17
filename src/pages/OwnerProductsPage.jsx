@@ -1,8 +1,10 @@
-// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web)
+// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE
 // Route: /world/:profileKey/owner/products
 //
-// Uses: /api/owner/products (GET/POST/PATCH/DELETE)
-// Requires: :profileKey in route (no silent fallback)
+// ✅ Adds "Back to IndiVerse" button (to /world/:profileKey)
+// ✅ Enhanced look (accent glow, glass panels, better list rows, cleaner modal)
+// ✅ Keeps hardened auth + routing
+// ✅ Requires :profileKey in route (no silent fallback)
 // Owner token: localStorage ownerToken:<profileKey> (fallback ownerToken)
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -78,6 +80,16 @@ function joinCsv(arr) {
   return arr.join(", ");
 }
 
+function hexToRgba(hex, a = 1) {
+  const h = String(hex || "").replace("#", "").trim();
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  if (full.length !== 6) return `rgba(129,140,248,${a})`;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
 const EMPTY_FORM = {
   _id: null,
   name: "",
@@ -129,6 +141,11 @@ export default function OwnerProductsPage() {
     } else {
       navigate("/", { replace: true });
     }
+  };
+
+  const goBackToIndiVerse = () => {
+    if (!profileKey) return navigate("/", { replace: false });
+    navigate(`/world/${encodeURIComponent(profileKey)}`, { state: { profileKey, bgUrl } });
   };
 
   const goOwnerLogin = useCallback(() => {
@@ -365,12 +382,9 @@ export default function OwnerProductsPage() {
 
       const saved = json?.item;
       if (saved?._id) {
-        setItems((prev) =>
-          prev.map((x) => (String(x?._id) === String(saved._id) ? saved : x))
-        );
+        setItems((prev) => prev.map((x) => (String(x?._id) === String(saved._id) ? saved : x)));
       }
     } catch (e) {
-      // revert by re-fetch
       fetchList();
       alert(e?.message || "Unable to update product");
     }
@@ -379,12 +393,24 @@ export default function OwnerProductsPage() {
   if (!canUse) {
     return (
       <div style={styles.page}>
-        <style>{css}</style>
+        <style>{css()}</style>
+
+        <div style={styles.glowOne} />
+        <div style={styles.glowTwo} />
+        <div style={styles.grid} />
+
         <div style={styles.header}>
-          <button style={styles.backBtn} onClick={goBack}>← Back</button>
+          <button className="op-back" onClick={goBack} title="Back to Owner Home">
+            ← Back
+          </button>
+
           <div style={styles.headerTitle}>Products</div>
-          <div style={{ width: 80 }} />
+
+          <button className="op-pill" onClick={() => navigate("/", { replace: false })} title="Home">
+            Home
+          </button>
         </div>
+
         <div style={styles.center}>
           <div style={styles.errTitle}>Missing profileKey</div>
           <div style={styles.errText}>
@@ -397,186 +423,222 @@ export default function OwnerProductsPage() {
 
   return (
     <div style={styles.page}>
-      <style>{css}</style>
+      <style>{css()}</style>
+
+      <div style={styles.glowOne} />
+      <div style={styles.glowTwo} />
+      <div style={styles.grid} />
 
       <div style={styles.header}>
-        <button style={styles.backBtn} onClick={goBack}>← Back</button>
+        <button className="op-back" onClick={goBack} title="Back to Owner Home">
+          ← Owner
+        </button>
+
         <div style={styles.headerTitle}>Products</div>
+
         <div style={styles.headerRight}>
-          <button style={styles.headerBtn} onClick={openCreate}>+ Add</button>
+          <button className="op-pill" onClick={goBackToIndiVerse} title="Back to IndiVerse">
+            <span className="op-dot" />
+            Back to IndiVerse
+          </button>
+
+          <button className="op-add" onClick={openCreate} title="Add Product">
+            + Add
+          </button>
         </div>
       </div>
 
-      <div style={styles.toolbar}>
-        <button style={styles.button} onClick={() => fetchList({ isRefresh: true })}>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
-
-      <div style={styles.filters}>
-        <input
-          value={filters.search}
-          onChange={(e) => setFilters((s) => ({ ...s, search: e.target.value }))}
-          placeholder="Search…"
-          style={styles.search}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") fetchList();
-          }}
-        />
-
-        <div style={styles.filterRow}>
-          <Chip on={filters.published === "all"} onClick={() => setFilters((s) => ({ ...s, published: "all" }))}>
-            All
-          </Chip>
-          <Chip on={filters.published === "true"} onClick={() => setFilters((s) => ({ ...s, published: "true" }))}>
-            Published
-          </Chip>
-          <Chip on={filters.published === "false"} onClick={() => setFilters((s) => ({ ...s, published: "false" }))}>
-            Hidden
-          </Chip>
-
-          <span style={{ width: 10 }} />
-
-          <Chip on={filters.inStock === "all"} onClick={() => setFilters((s) => ({ ...s, inStock: "all" }))}>
-            Any stock
-          </Chip>
-          <Chip on={filters.inStock === "true"} onClick={() => setFilters((s) => ({ ...s, inStock: "true" }))}>
-            In stock
-          </Chip>
-          <Chip on={filters.inStock === "false"} onClick={() => setFilters((s) => ({ ...s, inStock: "false" }))}>
-            Out
-          </Chip>
+      <div style={styles.panelWrap}>
+        <div style={styles.toolbar}>
+          <button className="op-btn" onClick={() => fetchList({ isRefresh: true })}>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
         </div>
 
-        <button style={styles.apply} onClick={() => fetchList()}>
-          Apply
-        </button>
-      </div>
+        <div style={styles.filters}>
+          <input
+            value={filters.search}
+            onChange={(e) => setFilters((s) => ({ ...s, search: e.target.value }))}
+            placeholder="Search products…"
+            className="op-search"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") fetchList();
+            }}
+          />
 
-      {loading ? (
-        <div style={styles.center}>
-          <div className="spinner" />
-          <div style={styles.muted}>Loading…</div>
-        </div>
-      ) : items.length === 0 ? (
-        <div style={styles.center}>
-          <div style={styles.muted}>No products yet.</div>
-        </div>
-      ) : (
-        <div style={styles.list}>
-          {items.map((p) => (
-            <button key={p._id} style={styles.row} onClick={() => openEdit(p)}>
-              <div style={{ flex: 1, textAlign: "left" }}>
-                <div style={styles.rowTitle}>{p.name || "(untitled)"}</div>
-                <div style={styles.rowSub}>
-                  {p.category ? `${p.category} • ` : ""}
-                  {moneyFromCents(p.priceCents, p.currency)}
-                  {p.stockQty !== null && p.stockQty !== undefined ? ` • qty: ${p.stockQty}` : ""}
-                </div>
-              </div>
+          <div style={styles.filterRow}>
+            <Chip on={filters.published === "all"} onClick={() => setFilters((s) => ({ ...s, published: "all" }))}>
+              All
+            </Chip>
+            <Chip on={filters.published === "true"} onClick={() => setFilters((s) => ({ ...s, published: "true" }))}>
+              Published
+            </Chip>
+            <Chip on={filters.published === "false"} onClick={() => setFilters((s) => ({ ...s, published: "false" }))}>
+              Hidden
+            </Chip>
 
-              <div style={styles.rowRight} onClick={(e) => e.stopPropagation()}>
-                <div style={styles.badgeText}>{p.isPublished ? "Published" : "Hidden"}</div>
-                <label style={styles.switchWrap}>
-                  <input
-                    type="checkbox"
-                    checked={!!p.isPublished}
-                    onChange={() => quickTogglePublished(p)}
-                  />
-                  <span style={styles.switchUi} />
-                </label>
-              </div>
+            <span style={{ width: 10 }} />
+
+            <Chip on={filters.inStock === "all"} onClick={() => setFilters((s) => ({ ...s, inStock: "all" }))}>
+              Any stock
+            </Chip>
+            <Chip on={filters.inStock === "true"} onClick={() => setFilters((s) => ({ ...s, inStock: "true" }))}>
+              In stock
+            </Chip>
+            <Chip on={filters.inStock === "false"} onClick={() => setFilters((s) => ({ ...s, inStock: "false" }))}>
+              Out
+            </Chip>
+
+            <div style={{ flex: 1 }} />
+            <button className="op-btn op-apply" onClick={() => fetchList()}>
+              Apply
             </button>
-          ))}
+          </div>
         </div>
-      )}
+
+        {loading ? (
+          <div style={styles.center}>
+            <div className="spinner" />
+            <div style={styles.muted}>Loading…</div>
+          </div>
+        ) : items.length === 0 ? (
+          <div style={styles.center}>
+            <div style={styles.muted}>No products yet.</div>
+          </div>
+        ) : (
+          <div style={styles.list}>
+            {items.map((p) => (
+              <button key={p._id} className="op-row" onClick={() => openEdit(p)}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                  <div className="op-avatar">{String(p?.name || "P").slice(0, 1).toUpperCase()}</div>
+                  <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+                    <div style={styles.rowTitle}>{p.name || "(untitled)"}</div>
+                    <div style={styles.rowSub}>
+                      {p.category ? `${p.category} • ` : ""}
+                      {moneyFromCents(p.priceCents, p.currency)}
+                      {p.stockQty !== null && p.stockQty !== undefined ? ` • qty: ${p.stockQty}` : ""}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={styles.rowRight} onClick={(e) => e.stopPropagation()}>
+                  <div className={p.isPublished ? "op-badge op-badgeOn" : "op-badge"}>{p.isPublished ? "Published" : "Hidden"}</div>
+                  <label className="op-switch">
+                    <input
+                      type="checkbox"
+                      checked={!!p.isPublished}
+                      onChange={() => quickTogglePublished(p)}
+                    />
+                    <span className="op-switchUi" />
+                  </label>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Modal */}
       {modalOpen && (
         <div style={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && closeModal()}>
           <div style={styles.modal}>
             <div style={styles.modalHeader}>
-              <button style={styles.modalLink} onClick={closeModal} disabled={saving}>
+              <button className="op-link" onClick={closeModal} disabled={saving}>
                 Close
               </button>
               <div style={styles.modalTitle}>{form._id ? "Edit Product" : "New Product"}</div>
-              <button style={{ ...styles.modalLink, opacity: saving ? 0.6 : 1 }} onClick={saveProduct} disabled={saving}>
+              <button className="op-link op-linkPrimary" onClick={saveProduct} disabled={saving}>
                 {saving ? "Saving…" : "Save"}
               </button>
             </div>
 
             <div style={styles.modalBody}>
               <Field label="Name" value={form.name} onChange={(v) => setForm((s) => ({ ...s, name: v }))} />
+
               <Field
                 label="Description"
                 value={form.description}
                 onChange={(v) => setForm((s) => ({ ...s, description: v }))}
                 multiline
               />
-              <Field label="Category" value={form.category} onChange={(v) => setForm((s) => ({ ...s, category: v }))} />
-              <Field label="Image URL" value={form.imageUrl} onChange={(v) => setForm((s) => ({ ...s, imageUrl: v }))} />
+
+              <div style={styles.twoCol}>
+                <div style={{ flex: 1 }}>
+                  <Field label="Category" value={form.category} onChange={(v) => setForm((s) => ({ ...s, category: v }))} />
+                </div>
+                <div style={{ width: 12 }} />
+                <div style={{ flex: 1 }}>
+                  <Field label="Currency" value={form.currency} onChange={(v) => setForm((s) => ({ ...s, currency: v }))} />
+                </div>
+              </div>
+
+              <div style={styles.twoCol}>
+                <div style={{ flex: 1 }}>
+                  <Field
+                    label="Price"
+                    value={form.priceDollars}
+                    onChange={(v) => setForm((s) => ({ ...s, priceDollars: v }))}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div style={{ width: 12 }} />
+                <div style={{ flex: 1 }}>
+                  <Field
+                    label="Stock Qty (blank = not tracked)"
+                    value={form.stockQtyText}
+                    onChange={(v) => setForm((s) => ({ ...s, stockQtyText: v }))}
+                    inputMode="numeric"
+                    placeholder=""
+                  />
+                </div>
+              </div>
+
+              <Field label="Primary Image URL" value={form.imageUrl} onChange={(v) => setForm((s) => ({ ...s, imageUrl: v }))} />
               <Field
                 label="Gallery URLs (comma separated)"
                 value={form.imageUrlsCsv}
                 onChange={(v) => setForm((s) => ({ ...s, imageUrlsCsv: v }))}
               />
 
-              <div style={styles.twoCol}>
-                <div style={{ flex: 1 }}>
-                  <Field
-                    label="Price (USD)"
-                    value={form.priceDollars}
-                    onChange={(v) => setForm((s) => ({ ...s, priceDollars: v }))}
-                    inputMode="decimal"
-                  />
-                </div>
-                <div style={{ width: 12 }} />
-                <div style={{ flex: 1 }}>
-                  <Field
-                    label="Currency"
-                    value={form.currency}
-                    onChange={(v) => setForm((s) => ({ ...s, currency: v }))}
-                  />
-                </div>
-              </div>
-
-              <Field label="Sizes (comma separated)" value={form.sizesCsv} onChange={(v) => setForm((s) => ({ ...s, sizesCsv: v }))} />
-              <Field label="Colors (comma separated)" value={form.colorsCsv} onChange={(v) => setForm((s) => ({ ...s, colorsCsv: v }))} />
+              <Field
+                label="Sizes (comma separated)"
+                value={form.sizesCsv}
+                onChange={(v) => setForm((s) => ({ ...s, sizesCsv: v }))}
+              />
+              <Field
+                label="Colors (comma separated)"
+                value={form.colorsCsv}
+                onChange={(v) => setForm((s) => ({ ...s, colorsCsv: v }))}
+              />
 
               <div style={styles.switchRow}>
                 <div style={styles.switchLabel}>In Stock</div>
-                <label style={styles.switchWrap}>
+                <label className="op-switch">
                   <input
                     type="checkbox"
                     checked={!!form.inStock}
                     onChange={(e) => setForm((s) => ({ ...s, inStock: e.target.checked }))}
                   />
-                  <span style={styles.switchUi} />
+                  <span className="op-switchUi" />
                 </label>
               </div>
 
-              <Field
-                label="Stock Qty (blank = not tracked)"
-                value={form.stockQtyText}
-                onChange={(v) => setForm((s) => ({ ...s, stockQtyText: v }))}
-                inputMode="numeric"
-              />
-
               <div style={styles.switchRow}>
                 <div style={styles.switchLabel}>Published</div>
-                <label style={styles.switchWrap}>
+                <label className="op-switch">
                   <input
                     type="checkbox"
                     checked={!!form.isPublished}
                     onChange={(e) => setForm((s) => ({ ...s, isPublished: e.target.checked }))}
                   />
-                  <span style={styles.switchUi} />
+                  <span className="op-switchUi" />
                 </label>
               </div>
 
               {!!form._id && (
                 <button
-                  style={{ ...styles.deleteButton, opacity: saving ? 0.7 : 1 }}
+                  className="op-danger"
                   disabled={saving}
                   onClick={() => deleteProduct({ _id: form._id, name: form.name })}
                 >
@@ -593,17 +655,13 @@ export default function OwnerProductsPage() {
 
 function Chip({ on, onClick, children }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ ...styles.chip, ...(on ? styles.chipOn : null) }}
-    >
+    <button type="button" onClick={onClick} className={on ? "op-chip op-chipOn" : "op-chip"}>
       {children}
     </button>
   );
 }
 
-function Field({ label, value, onChange, multiline, inputMode }) {
+function Field({ label, value, onChange, multiline, inputMode, placeholder }) {
   return (
     <div style={styles.field}>
       <div style={styles.label}>{label}</div>
@@ -611,15 +669,17 @@ function Field({ label, value, onChange, multiline, inputMode }) {
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          style={{ ...styles.input, ...styles.inputMulti }}
+          className="op-input op-textarea"
           rows={4}
+          placeholder={placeholder}
         />
       ) : (
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          style={styles.input}
+          className="op-input"
           inputMode={inputMode}
+          placeholder={placeholder}
         />
       )}
     </div>
@@ -629,234 +689,415 @@ function Field({ label, value, onChange, multiline, inputMode }) {
 const styles = {
   page: {
     minHeight: "100vh",
-    background: "#0b0b0b",
-    color: "#fff",
+    background: "linear-gradient(180deg, #020617, #0b1220, #020617)",
+    color: "#e5e7eb",
     fontFamily:
       'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+    position: "relative",
+    overflow: "hidden",
+  },
+
+  glowOne: {
+    position: "fixed",
+    width: 360,
+    height: 360,
+    borderRadius: 999,
+    top: -120,
+    right: -140,
+    background: hexToRgba("#818cf8", 0.28),
+    filter: "blur(90px)",
+    opacity: 0.8,
+    pointerEvents: "none",
+    zIndex: 0,
+  },
+  glowTwo: {
+    position: "fixed",
+    width: 360,
+    height: 360,
+    borderRadius: 999,
+    bottom: -140,
+    left: -160,
+    background: "rgba(236,72,153,0.22)",
+    filter: "blur(90px)",
+    opacity: 0.7,
+    pointerEvents: "none",
+    zIndex: 0,
+  },
+  grid: {
+    position: "fixed",
+    inset: 0,
+    backgroundImage:
+      "radial-gradient(circle at 1px 1px, rgba(148,163,184,0.10) 1px, rgba(0,0,0,0) 0)",
+    backgroundSize: "26px 26px",
+    maskImage: "radial-gradient(circle at 50% 18%, rgba(0,0,0,0.85), rgba(0,0,0,0) 62%)",
+    WebkitMaskImage: "radial-gradient(circle at 50% 18%, rgba(0,0,0,0.85), rgba(0,0,0,0) 62%)",
+    pointerEvents: "none",
+    zIndex: 0,
+    opacity: 0.9,
   },
 
   header: {
+    position: "sticky",
+    top: 0,
+    zIndex: 5,
     display: "flex",
     alignItems: "center",
     gap: 10,
-    padding: "12px 12px 10px",
-    borderBottom: "1px solid #222",
-    position: "sticky",
-    top: 0,
-    background: "#0b0b0b",
-    zIndex: 5,
+    padding: "14px 16px",
+    borderBottom: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(2,6,23,0.62)",
+    backdropFilter: "blur(12px)",
   },
-  backBtn: {
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid transparent",
-    background: "transparent",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 800,
-  },
-  headerTitle: { flex: 1, textAlign: "center", fontWeight: 900, letterSpacing: 0.6 },
-  headerRight: { width: 80, display: "flex", justifyContent: "flex-end" },
-  headerBtn: {
-    padding: "8px 10px",
-    background: "#1a1a1a",
-    borderRadius: 10,
-    border: "1px solid #2a2a2a",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 800,
+  headerTitle: { flex: 1, textAlign: "center", fontWeight: 900, letterSpacing: 1, textTransform: "uppercase" },
+  headerRight: { display: "flex", gap: 10, alignItems: "center" },
+
+  panelWrap: {
+    position: "relative",
+    zIndex: 2,
+    maxWidth: 980,
+    margin: "0 auto",
+    padding: "14px 14px 40px",
   },
 
-  toolbar: { padding: 12, borderBottom: "1px solid #222" },
-  button: {
-    padding: "10px 14px",
-    background: "#1a1a1a",
-    borderRadius: 10,
-    border: "1px solid #2a2a2a",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
+  toolbar: { display: "flex", gap: 10, alignItems: "center", padding: "10px 2px 12px" },
 
-  filters: { padding: 12, borderBottom: "1px solid #222" },
-  search: {
-    height: 42,
-    width: "100%",
-    borderRadius: 10,
-    border: "1px solid #2a2a2a",
-    padding: "0 12px",
-    color: "#fff",
-    background: "#111",
-    marginBottom: 10,
-    outline: "none",
-  },
-  filterRow: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" },
-  chip: {
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid #2a2a2a",
-    background: "#121212",
-    color: "#ddd",
-    fontSize: 12,
-    cursor: "pointer",
-  },
-  chipOn: { background: "#1f1f1f", color: "#fff" },
-  apply: {
-    marginTop: 10,
-    padding: "8px 12px",
-    borderRadius: 10,
-    background: "#1a1a1a",
-    border: "1px solid #2a2a2a",
-    color: "#fff",
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-
-  list: { paddingBottom: 24 },
-  row: {
-    width: "100%",
-    display: "flex",
-    gap: 12,
+  filters: {
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(15,23,42,0.66)",
     padding: 12,
-    borderBottom: "1px solid #161616",
-    alignItems: "center",
-    background: "transparent",
-    color: "#fff",
-    cursor: "pointer",
-    textAlign: "left",
+    boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
   },
-  rowTitle: { fontSize: 16, fontWeight: 700 },
-  rowSub: { color: "#aaa", marginTop: 2, fontSize: 13 },
-  rowRight: { display: "flex", alignItems: "flex-end", gap: 8 },
-  badgeText: { color: "#aaa", fontSize: 12 },
+
+  filterRow: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 10 },
+
+  list: {
+    marginTop: 14,
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(15,23,42,0.52)",
+    overflow: "hidden",
+    boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
+  },
+
+  rowTitle: { fontSize: 14, fontWeight: 900, color: "#f9fafb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  rowSub: { color: "rgba(203,213,225,0.85)", marginTop: 3, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+
+  rowRight: { display: "flex", alignItems: "center", gap: 10 },
 
   center: { padding: 18, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
-  muted: { color: "#aaa", marginTop: 10 },
+  muted: { color: "rgba(148,163,184,0.9)", marginTop: 10, fontWeight: 700 },
+
   errTitle: { fontSize: 18, fontWeight: 900, marginBottom: 8 },
-  errText: { color: "#aaa", textAlign: "center" },
+  errText: { color: "rgba(148,163,184,0.9)", textAlign: "center" },
 
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0,0,0,0.7)",
+    background: "rgba(0,0,0,0.62)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     padding: 14,
     zIndex: 50,
+    backdropFilter: "blur(6px)",
   },
   modal: {
-    width: "min(920px, 100%)",
+    width: "min(980px, 100%)",
     maxHeight: "92vh",
-    background: "#0b0b0b",
-    borderRadius: 16,
-    border: "1px solid #222",
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(2,6,23,0.96)",
     overflow: "hidden",
-    boxShadow: "0 30px 80px rgba(0,0,0,0.6)",
+    boxShadow: "0 30px 90px rgba(0,0,0,0.65)",
   },
   modalHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "12px 12px",
-    borderBottom: "1px solid #222",
-    position: "sticky",
-    top: 0,
-    background: "#0b0b0b",
-    zIndex: 2,
+    padding: "12px 14px",
+    borderBottom: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(2,6,23,0.92)",
   },
-  modalTitle: { fontWeight: 900 },
-  modalLink: {
-    background: "transparent",
-    border: "1px solid transparent",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 800,
-    padding: "6px 8px",
-    borderRadius: 10,
-  },
-  modalBody: { padding: 12, overflow: "auto" },
+  modalTitle: { fontWeight: 900, letterSpacing: 0.8, textTransform: "uppercase" },
+  modalBody: { padding: 14, overflow: "auto" },
 
   field: { marginBottom: 12 },
-  label: { color: "#bbb", marginBottom: 6, fontSize: 12 },
-  input: {
-    width: "100%",
-    minHeight: 42,
-    borderRadius: 10,
-    border: "1px solid #2a2a2a",
-    padding: "10px 12px",
-    color: "#fff",
-    background: "#111",
-    outline: "none",
-  },
-  inputMulti: { minHeight: 100, resize: "vertical" },
+  label: { color: "rgba(148,163,184,0.92)", marginBottom: 6, fontSize: 12, fontWeight: 900, letterSpacing: 1.1, textTransform: "uppercase" },
+
   twoCol: { display: "flex" },
 
   switchRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "8px 0",
+    padding: "10px 0",
     marginBottom: 8,
     borderBottom: "1px solid rgba(255,255,255,0.06)",
   },
-  switchLabel: { color: "#ddd", fontWeight: 700 },
-
-  switchWrap: { position: "relative", display: "inline-flex", alignItems: "center", gap: 8 },
-  switchUi: { display: "none" }, // actual styling done in CSS below
-
-  deleteButton: {
-    marginTop: 14,
-    padding: "12px 12px",
-    borderRadius: 10,
-    border: "1px solid #3a1a1a",
-    background: "#1a0f0f",
-    color: "#ffb4b4",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
+  switchLabel: { color: "rgba(226,232,240,0.95)", fontWeight: 900 },
 };
 
-const css = `
-/* tiny spinner */
-.spinner{
-  width: 18px;
-  height: 18px;
-  border: 2px solid rgba(255,255,255,0.25);
-  border-top-color: rgba(255,255,255,0.9);
-  border-radius: 999px;
-  animation: spin 0.9s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+function css() {
+  return `
+  *{ box-sizing: border-box; }
+  button{ font-family: inherit; }
 
-/* toggle switches (simple) */
-label[style*="switchWrap"] input{
-  width: 44px;
-  height: 26px;
-  appearance: none;
-  background: rgba(255,255,255,0.12);
-  border: 1px solid rgba(255,255,255,0.20);
-  border-radius: 999px;
-  position: relative;
-  cursor: pointer;
-  outline: none;
+  .spinner{
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255,255,255,0.25);
+    border-top-color: rgba(255,255,255,0.9);
+    border-radius: 999px;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .op-back{
+    height: 40px;
+    border-radius: 999px;
+    padding: 0 12px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(2,6,23,0.35);
+    color: rgba(255,255,255,0.92);
+    font-weight: 900;
+    letter-spacing: 0.6px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+    user-select:none;
+  }
+  .op-back:hover{ transform: translateY(-1px); background: rgba(15,23,42,0.55); border-color: rgba(129,140,248,0.45); }
+  .op-back:active{ transform: translateY(0) scale(0.995); opacity:0.95; }
+
+  .op-pill{
+    height: 40px;
+    border-radius: 999px;
+    padding: 0 14px 0 12px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(2,6,23,0.35);
+    color: rgba(255,255,255,0.92);
+    font-weight: 900;
+    letter-spacing: 0.6px;
+    cursor: pointer;
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    backdrop-filter: blur(10px);
+    transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+    user-select:none;
+    text-transform: uppercase;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .op-pill:hover{ transform: translateY(-1px); background: rgba(15,23,42,0.55); border-color: rgba(129,140,248,0.45); }
+  .op-pill:active{ transform: translateY(0) scale(0.995); opacity:0.95; }
+  .op-dot{
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(129,140,248,0.95);
+    box-shadow: 0 0 0 6px rgba(129,140,248,0.18);
+  }
+
+  .op-add{
+    height: 40px;
+    border-radius: 999px;
+    padding: 0 14px;
+    border: 1px solid rgba(56,189,248,0.35);
+    background: linear-gradient(90deg, rgba(56,189,248,0.92), rgba(168,85,247,0.92));
+    color: rgba(236,254,255,0.98);
+    font-weight: 900;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    user-select:none;
+    white-space: nowrap;
+  }
+  .op-add:active{ transform: scale(0.995); opacity:0.96; }
+
+  .op-btn{
+    height: 40px;
+    border-radius: 999px;
+    padding: 0 14px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(2,6,23,0.35);
+    color: rgba(255,255,255,0.92);
+    font-weight: 900;
+    cursor: pointer;
+    letter-spacing: 0.4px;
+  }
+  .op-btn:hover{ border-color: rgba(129,140,248,0.35); background: rgba(15,23,42,0.55); }
+  .op-apply{ border-color: rgba(34,197,94,0.35); }
+  .op-apply:hover{ border-color: rgba(34,197,94,0.55); }
+
+  .op-search{
+    height: 44px;
+    width: 100%;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14);
+    padding: 0 14px;
+    color: rgba(255,255,255,0.94);
+    background: rgba(2,6,23,0.45);
+    outline: none;
+    font-weight: 700;
+  }
+  .op-search::placeholder{ color: rgba(148,163,184,0.9); }
+
+  .op-chip{
+    padding: 7px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(2,6,23,0.35);
+    color: rgba(226,232,240,0.92);
+    font-size: 12px;
+    cursor: pointer;
+    font-weight: 900;
+    letter-spacing: 0.3px;
+  }
+  .op-chip:hover{ border-color: rgba(129,140,248,0.35); background: rgba(15,23,42,0.55); }
+  .op-chipOn{
+    background: rgba(129,140,248,0.18);
+    border-color: rgba(129,140,248,0.55);
+    color: rgba(255,255,255,0.96);
+  }
+
+  .op-row{
+    width: 100%;
+    display: flex;
+    gap: 12px;
+    padding: 12px 12px;
+    align-items: center;
+    background: transparent;
+    color: rgba(255,255,255,0.94);
+    cursor: pointer;
+    border: none;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    transition: background 140ms ease;
+  }
+  .op-row:hover{
+    background: rgba(255,255,255,0.04);
+  }
+
+  .op-avatar{
+    width: 38px;
+    height: 38px;
+    border-radius: 999px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-weight: 900;
+    background: rgba(56,189,248,0.16);
+    border: 1px solid rgba(129,140,248,0.6);
+    color: rgba(226,232,240,0.95);
+    flex: 0 0 auto;
+  }
+
+  .op-badge{
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(148,163,184,0.92);
+    background: rgba(2,6,23,0.35);
+    user-select:none;
+    white-space: nowrap;
+  }
+  .op-badgeOn{
+    border-color: rgba(34,197,94,0.45);
+    background: rgba(34,197,94,0.14);
+    color: rgba(187,247,208,0.95);
+  }
+
+  .op-switch{
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .op-switch input{
+    width: 46px;
+    height: 26px;
+    appearance: none;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 999px;
+    position: relative;
+    cursor: pointer;
+    outline: none;
+  }
+  .op-switch input:checked{
+    background: rgba(34,197,94,0.24);
+    border-color: rgba(34,197,94,0.45);
+  }
+  .op-switchUi{
+    pointer-events: none;
+  }
+  .op-switch input::after{
+    content: "";
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.95);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: transform 160ms ease;
+  }
+  .op-switch input:checked::after{
+    transform: translateX(20px);
+  }
+
+  .op-input{
+    width: 100%;
+    min-height: 44px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.14);
+    padding: 12px 12px;
+    color: rgba(255,255,255,0.94);
+    background: rgba(2,6,23,0.45);
+    outline: none;
+    font-weight: 700;
+  }
+  .op-input::placeholder{ color: rgba(148,163,184,0.9); }
+  .op-textarea{
+    min-height: 112px;
+    resize: vertical;
+  }
+
+  .op-link{
+    background: rgba(2,6,23,0.35);
+    border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.92);
+    cursor: pointer;
+    font-weight: 900;
+    padding: 8px 12px;
+    border-radius: 999px;
+    letter-spacing: 0.4px;
+  }
+  .op-linkPrimary{
+    border-color: rgba(56,189,248,0.35);
+    background: rgba(56,189,248,0.14);
+  }
+  .op-link:disabled{ opacity: 0.6; cursor: not-allowed; }
+
+  .op-danger{
+    margin-top: 14px;
+    width: 100%;
+    padding: 12px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(248,113,113,0.55);
+    background: rgba(239,68,68,0.10);
+    color: rgba(254,202,202,0.95);
+    cursor: pointer;
+    font-weight: 900;
+    letter-spacing: 0.4px;
+  }
+  .op-danger:disabled{ opacity: 0.6; cursor: not-allowed; }
+
+  @media (max-width: 620px){
+    .op-pill{ display:none; }
+  }
+  `;
 }
-label[style*="switchWrap"] input:checked{
-  background: rgba(34,197,94,0.28);
-  border-color: rgba(34,197,94,0.45);
-}
-label[style*="switchWrap"] input::after{
-  content: "";
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: #fff;
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  transition: transform 160ms ease;
-}
-label[style*="switchWrap"] input:checked::after{
-  transform: translateX(18px);
-}
-`;
