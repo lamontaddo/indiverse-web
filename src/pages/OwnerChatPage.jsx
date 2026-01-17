@@ -1,13 +1,15 @@
-// src/pages/OwnerChatPage.jsx ✅ FULL DROP-IN (Web)
+// src/pages/OwnerChatPage.jsx ✅ FULL DROP-IN (Web) — ABSOLUTE API + HARDENED
 // Route: /world/:profileKey/owner/chat
 //
-// Mirrors RN OwnerChatScreen behavior:
-// ✅ Tight keyboard-like composer (sticky bottom, no extra gap)
+// ✅ Sticky composer (no bottom gap) + tight keyboard feel
 // ✅ Auto-scroll to bottom on initial load + after send
 // ✅ While typing, keeps list pinned to bottom
-// ✅ AUTH THREAD: header shows real name/email if backend returns { user, messages }
+// ✅ AUTH thread: header uses real name/email if backend returns { user, messages }
 //    OR if passed via route state { user } from OwnerMessagesPage
-// ✅ CONTACT thread: supports contact endpoints fallbacks (same as RN)
+// ✅ CONTACT thread: supports contact endpoints fallbacks
+// ✅ Missing profileKey blocks API + shows banner
+// ✅ 401/403 redirects to /world/:profileKey/owner/login
+// ✅ Polling 3s only when tab visible
 //
 // Uses (owner auth):
 // - AUTH:
@@ -27,26 +29,18 @@
 //    DELETE /api/messages?contactId=...
 //    POST   /api/messages/clear                { contactId }
 //
-// Hardened:
-// ✅ NO 'lamont' fallback (route param only; optional localStorage profileKey ok)
-// ✅ Missing profileKey blocks API + shows error
-// ✅ 401/403 redirects to /owner/login
-// ✅ Polling 3s only when tab visible
-//
-// Navigation in:
-// - OwnerMessagesPage pushes here with navigate(..., { state: { threadType, userId/contactId, user, contact } })
+// Requires:
+// - src/utils/ownerApi.web.js (exports ownerFetchRawWeb, normalizeProfileKey)
+// - src/services/profileRegistry.js (getProfileByKey)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getProfileByKey } from "../services/profileRegistry";
+import { ownerFetchRawWeb, normalizeProfileKey } from "../utils/ownerApi.web";
 
 const POLL_MS = 3000;
 
 /* -------------------- helpers -------------------- */
-
-function normalizePk(v) {
-  return String(v || "").trim().toLowerCase() || "";
-}
 
 function isPlainObject(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -90,45 +84,18 @@ async function readJsonSafe(res) {
   }
 }
 
-function getActiveProfileKeyWeb() {
+function formatTime(iso) {
+  if (!iso) return "";
   try {
-    return normalizePk(localStorage.getItem("profileKey"));
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   } catch {
     return "";
   }
 }
 
-function ownerTokenKey(profileKey) {
-  return `ownerToken:${normalizePk(profileKey)}`;
-}
-
-function getOwnerToken(profileKey) {
-  try {
-    return (
-      localStorage.getItem(ownerTokenKey(profileKey)) ||
-      localStorage.getItem("ownerToken") ||
-      ""
-    );
-  } catch {
-    return "";
-  }
-}
-
-async function ownerFetchRawWeb(path, { profileKey, method = "GET", body } = {}) {
-  const pk = normalizePk(profileKey);
-  const token = getOwnerToken(pk);
-
-  const res = await fetch(path, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      "x-profile-key": pk,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body,
-  });
-
-  return res;
+function isAtBottom(el, thresholdPx = 28) {
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < thresholdPx;
 }
 
 /* -------------------- CONTACT compat helpers -------------------- */
@@ -220,22 +187,20 @@ async function deleteOwnerChatForAuthUser(profileKey, userId) {
 
 /* -------------------- page -------------------- */
 
-function formatTime(iso) {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
 export default function OwnerChatPage() {
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
 
-  const routePk = normalizePk(params?.profileKey);
-  const storedPk = getActiveProfileKeyWeb();
+  const routePk = normalizeProfileKey(params?.profileKey);
+  const storedPk = (() => {
+    try {
+      return normalizeProfileKey(localStorage.getItem("profileKey"));
+    } catch {
+      return "";
+    }
+  })();
+
   const profileKey = routePk || storedPk || "";
 
   // thread params come from navigation state
@@ -260,6 +225,7 @@ export default function OwnerChatPage() {
   const didInitialLoadRef = useRef(false);
   const inFlightRef = useRef(false);
   const pollRef = useRef(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const profile = useMemo(() => (profileKey ? getProfileByKey(profileKey) : null), [profileKey]);
   const ownerLabel = profile?.label || profile?.brandTopTitle || "Owner";
@@ -285,9 +251,9 @@ export default function OwnerChatPage() {
     if (!profileKey) return navigate("/", { replace: true });
     navigate(`/world/${encodeURIComponent(profileKey)}/owner/login`, {
       replace: true,
-      state: { profileKey },
+      state: { profileKey, next: location.pathname + location.search },
     });
-  }, [navigate, profileKey]);
+  }, [navigate, profileKey, location.pathname, location.search]);
 
   const scrollToBottom = useCallback((smooth = true) => {
     const el = listRef.current;
@@ -297,9 +263,23 @@ export default function OwnerChatPage() {
     } catch {}
   }, []);
 
-  // keep pinned to bottom while typing
+  // track whether user scrolled up; only auto-stick if at bottom
   useEffect(() => {
-    const t = setTimeout(() => scrollToBottom(true), 40);
+    const el = listRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      shouldStickToBottomRef.current = isAtBottom(el, 36);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // keep pinned while typing only if already at bottom
+  useEffect(() => {
+    if (!shouldStickToBottomRef.current) return;
+    const t = setTimeout(() => scrollToBottom(true), 35);
     return () => clearTimeout(t);
   }, [input, scrollToBottom]);
 
@@ -346,16 +326,15 @@ export default function OwnerChatPage() {
         return;
       }
 
-      if (!res.ok) {
-        throw new Error(data?.error || data?.message || "Failed to load messages");
-      }
+      if (!res.ok) throw new Error(data?.error || data?.message || "Failed to load messages");
 
-      // ✅ hydrate auth user if backend returns it
-      if (isAuthThread && safeUserObj(data?.user)) {
-        setThreadUser(data.user);
-      }
+      if (isAuthThread && safeUserObj(data?.user)) setThreadUser(data.user);
 
       const arr = normalizeMessagesResponse(data);
+
+      // decide whether to stick: if user is at bottom OR it's initial load
+      const el = listRef.current;
+      const wasAtBottom = isInitial || isAtBottom(el, 60);
 
       setMessages((prev) => {
         const prevLastId = prev.length ? String(prev[prev.length - 1]?._id || prev[prev.length - 1]?.id) : null;
@@ -366,7 +345,9 @@ export default function OwnerChatPage() {
 
       if (isInitial) {
         didInitialLoadRef.current = true;
-        setTimeout(() => scrollToBottom(false), 50);
+        setTimeout(() => scrollToBottom(false), 45);
+      } else if (wasAtBottom) {
+        setTimeout(() => scrollToBottom(true), 45);
       }
     } catch (err) {
       setError(err?.message || "Failed to load messages");
@@ -431,7 +412,7 @@ export default function OwnerChatPage() {
     setMessages((prev) => [...prev, optimistic]);
     setInput("");
     setSending(true);
-    setTimeout(() => scrollToBottom(true), 40);
+    setTimeout(() => scrollToBottom(true), 35);
 
     try {
       const res = isAuthThread
@@ -455,7 +436,7 @@ export default function OwnerChatPage() {
         return [...withoutTmp, saved];
       });
 
-      setTimeout(() => scrollToBottom(true), 50);
+      setTimeout(() => scrollToBottom(true), 45);
     } catch (err) {
       setError(err?.message || "Failed to send message");
       setMessages((prev) => prev.filter((m) => String(m._id || m.id) !== String(optimistic._id)));
@@ -497,7 +478,6 @@ export default function OwnerChatPage() {
       if (!res.ok) throw new Error(data?.error || data?.message || "Failed to delete chat");
 
       setMessages([]);
-      alert("Chat cleared.");
     } catch (err) {
       setError(err?.message || "Failed to delete chat");
     } finally {
@@ -510,10 +490,11 @@ export default function OwnerChatPage() {
     navigate(`/world/${encodeURIComponent(profileKey)}/owner/messages`, { state: { profileKey } });
   };
 
-  const disabledSend = !profileKey || sending || (isAuthThread ? !userId : !contactId);
+  const canUseApi = !!profileKey && (isAuthThread ? !!userId : !!contactId);
+  const disabledSend = !canUseApi || sending;
 
   return (
-    <div style={styles.page(accent)}>
+    <div style={styles.page}>
       <style>{css(accent)}</style>
 
       {/* Header */}
@@ -544,24 +525,36 @@ export default function OwnerChatPage() {
       </div>
 
       {/* Body */}
-      <div style={styles.body}>
-        {loading ? (
-          <div style={styles.center}>
-            <div className="spinner" />
-            <div style={styles.muted}>Loading messages…</div>
+      {!profileKey ? (
+        <div style={styles.center}>
+          <div style={styles.errorText}>Missing profileKey.</div>
+          <div style={styles.muted}>Open: /world/:profileKey/owner/chat</div>
+        </div>
+      ) : !canUseApi ? (
+        <div style={styles.center}>
+          <div style={styles.errorText}>
+            {isAuthThread ? "Missing userId for auth thread." : "Missing contactId for contact thread."}
           </div>
-        ) : error ? (
-          <div style={styles.center}>
-            <div style={styles.errorText}>{error}</div>
-            <button style={styles.retryBtn} onClick={loadMessages}>
-              Retry
-            </button>
-          </div>
-        ) : (
-          <div ref={listRef} style={styles.list} onScroll={() => {}}>
-            <div style={{ padding: "10px 16px 12px" }}>
+          <div style={styles.muted}>Navigate here from OwnerMessagesPage with state params.</div>
+        </div>
+      ) : loading ? (
+        <div style={styles.center}>
+          <div className="spinner" />
+          <div style={styles.muted}>Loading messages…</div>
+        </div>
+      ) : error ? (
+        <div style={styles.center}>
+          <div style={styles.errorText}>{error}</div>
+          <button style={styles.retryBtn} onClick={loadMessages}>
+            Retry
+          </button>
+        </div>
+      ) : (
+        <div style={styles.listWrap}>
+          <div ref={listRef} style={styles.list}>
+            <div style={styles.pad}>
               {messages.map((m, idx) => {
-                const isOwner = m?.sender === "owner";
+                const isOwner = String(m?.sender || "").toLowerCase() === "owner";
                 const body = String(m?.body || "");
                 const when = formatTime(m?.createdAt);
 
@@ -590,10 +583,10 @@ export default function OwnerChatPage() {
               })}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Composer (sticky bottom) */}
+      {/* Composer */}
       <div style={styles.composerWrap}>
         <div style={styles.composer}>
           <span style={{ color: "#fff", opacity: 0.9 }}>💬</span>
@@ -605,13 +598,12 @@ export default function OwnerChatPage() {
             style={styles.textarea}
             rows={1}
             onKeyDown={(e) => {
-              // Enter = send (Shift+Enter = newline)
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
               }
             }}
-            disabled={!profileKey || (isAuthThread ? !userId : !contactId)}
+            disabled={!canUseApi}
           />
 
           <button
@@ -624,11 +616,9 @@ export default function OwnerChatPage() {
           </button>
         </div>
 
-        <div style={{ paddingBottom: 10, display: "flex", justifyContent: "center" }}>
-          <div style={{ fontSize: 11, color: "rgba(148,163,184,0.85)" }}>
-            {ownerLabel} chat • {isAuthThread ? "auth" : "contact"}
-            {deleting ? " • deleting…" : ""}
-          </div>
+        <div style={styles.footerHint}>
+          {ownerLabel} chat • {isAuthThread ? "auth" : "contact"}
+          {deleting ? " • deleting…" : ""}
         </div>
       </div>
     </div>
@@ -638,7 +628,7 @@ export default function OwnerChatPage() {
 /* -------------------- styles -------------------- */
 
 const styles = {
-  page: (accent) => ({
+  page: {
     minHeight: "100vh",
     display: "flex",
     flexDirection: "column",
@@ -646,7 +636,7 @@ const styles = {
     color: "#e5e7eb",
     fontFamily:
       'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
-  }),
+  },
 
   header: {
     padding: "12px 16px",
@@ -670,20 +660,38 @@ const styles = {
     fontWeight: 900,
     cursor: "pointer",
   },
-  headerName: { color: "#fff", fontSize: 16, fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  headerSub: { color: "#94a3b8", fontSize: 12, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-
-  body: { flex: 1, display: "flex", flexDirection: "column" },
-
-  list: {
-    flex: 1,
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+  headerName: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: 900,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  headerSub: {
+    color: "#94a3b8",
+    fontSize: 12,
+    marginTop: 3,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
 
-  center: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
+  listWrap: { flex: 1, display: "flex", minHeight: 0 },
+  list: { flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" },
+  pad: { padding: "10px 16px 12px" },
+
+  center: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: 24,
+  },
   muted: { color: "#9ca3af", fontSize: 13, textAlign: "center" },
-  errorText: { color: "#fca5a5", textAlign: "center", fontWeight: 800 },
+  errorText: { color: "#fca5a5", textAlign: "center", fontWeight: 900 },
   retryBtn: {
     padding: "8px 14px",
     borderRadius: 999,
@@ -706,6 +714,7 @@ const styles = {
     color: "#0b1020",
     fontWeight: 900,
     flex: "0 0 auto",
+    marginTop: 2,
   },
 
   bubble: {
@@ -721,7 +730,7 @@ const styles = {
   },
   bUser: {
     borderTopRightRadius: 6,
-    background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(148,163,184,0.30))",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.16), rgba(148,163,184,0.26))",
   },
   msg: { color: "#fff", fontSize: 14, lineHeight: "20px", whiteSpace: "pre-wrap" },
   time: { color: "#9ca3af", fontSize: 11, marginTop: 6, textAlign: "right" },
@@ -765,6 +774,13 @@ const styles = {
     padding: "10px 14px",
     cursor: "pointer",
     minWidth: 72,
+  },
+  footerHint: {
+    paddingBottom: 10,
+    display: "flex",
+    justifyContent: "center",
+    fontSize: 11,
+    color: "rgba(148,163,184,0.85)",
   },
 };
 
