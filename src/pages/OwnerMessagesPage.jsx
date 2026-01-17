@@ -1,6 +1,9 @@
 // src/pages/OwnerMessagesPage.jsx ✅ FULL DROP-IN (Web) — AUTH THREADS v3 + DISPLAY NAME
 // Route: /world/:profileKey/owner/messages
 //
+// ✅ FIXED: Web now calls BACKEND (absolute API base), not same-origin indiverse-web
+// ✅ Uses VITE_API_BASE_URL if set, else defaults to https://indiverse-backend.onrender.com
+//
 // Uses:
 //  - GET /api/owner/chat/threads
 //
@@ -17,8 +20,7 @@
 // ✅ Polling (3s) only when tab is visible
 //
 // Notes:
-// - This navigates to: /world/:profileKey/owner/chat
-//   If you haven’t built it yet, it still navigates (you can add later).
+// - Navigates to: /world/:profileKey/owner/chat
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -26,8 +28,27 @@ import { getProfileByKey } from "../services/profileRegistry";
 
 const POLL_MS = 3000;
 
+// ✅ IMPORTANT: absolute backend base (prevents indiverse-web /api 404)
+const OWNER_API_BASE =
+  import.meta.env.VITE_API_BASE_URL?.trim() ||
+  "https://indiverse-backend.onrender.com";
+
 function normalizePk(pk) {
   return String(pk || "").trim().toLowerCase();
+}
+
+function joinUrl(base, path) {
+  const cleanBase = String(base || "").replace(/\/+$/, "");
+  const p = String(path || "");
+  if (!p) return cleanBase;
+  if (p.startsWith("http://") || p.startsWith("https://")) return p;
+  const cleanPath = p.startsWith("/") ? p : `/${p}`;
+  return `${cleanBase}${cleanPath}`;
+}
+
+function withCacheBust(url) {
+  const bust = `_ts=${Date.now()}`;
+  return url.includes("?") ? `${url}&${bust}` : `${url}?${bust}`;
 }
 
 function getActiveProfileKeyWeb() {
@@ -62,14 +83,20 @@ async function readJsonSafe(res) {
   }
 }
 
-// ✅ web owner fetch (no throw, returns Response)
+// ✅ web owner fetch (ABSOLUTE URL, no throw, returns Response)
 async function ownerFetchRawWeb(path, { profileKey, method = "GET", body } = {}) {
   const pk = normalizePk(profileKey);
   const token = getOwnerToken(pk);
 
-  const res = await fetch(path, {
+  const url = withCacheBust(joinUrl(OWNER_API_BASE, path));
+
+  const res = await fetch(url, {
     method,
+    mode: "cors",
+    credentials: "omit",
+    cache: "no-store",
     headers: {
+      Accept: "application/json",
       "content-type": "application/json",
       "x-profile-key": pk,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -114,7 +141,14 @@ function isPlainObject(v) {
 }
 
 function pickAuthUserObject(t) {
-  const candidates = [t?.user, t?.authUser, t?.account, t?.customer, t?.profile, t?.identity];
+  const candidates = [
+    t?.user,
+    t?.authUser,
+    t?.account,
+    t?.customer,
+    t?.profile,
+    t?.identity,
+  ];
   for (const c of candidates) {
     if (isPlainObject(c)) return c;
   }
@@ -161,7 +195,8 @@ function getInitialsForThread(t) {
 
   const u = pickAuthUserObject(t);
   const f =
-    (u?.firstName || u?.name || u?.displayName || u?.username || "").trim?.()[0] || "";
+    (u?.firstName || u?.name || u?.displayName || u?.username || "").trim?.()[0] ||
+    "";
   const l = (u?.lastName || "").trim?.()[0] || "";
   const s = (f + l).toUpperCase().trim();
   return s || "U";
@@ -362,7 +397,6 @@ export default function OwnerMessagesPage() {
       else stop();
     };
 
-    // start immediately if visible
     if (document.visibilityState === "visible") start();
 
     document.addEventListener("visibilitychange", onVis);
@@ -377,7 +411,9 @@ export default function OwnerMessagesPage() {
     if (!q) return threads;
 
     return threads.filter((t) => {
-      const name = (t?.contact ? getDisplayNameFromContact(t.contact) : getDisplayNameFromAuth(t)).toLowerCase();
+      const name = (
+        t?.contact ? getDisplayNameFromContact(t.contact) : getDisplayNameFromAuth(t)
+      ).toLowerCase();
       const phone = String(t?.contact?.phone || "").toLowerCase();
       const lastBody = String(t?.lastMessage?.body || "").toLowerCase();
       const userId = String(t?.userId || "").toLowerCase();
@@ -404,7 +440,7 @@ export default function OwnerMessagesPage() {
             bgUrl,
             threadType: "auth",
             userId: thread?.userId || null,
-            user: pickAuthUserObject(thread), // ✅ pass through for header
+            user: pickAuthUserObject(thread),
             contact: null,
             contactId: null,
           }
@@ -426,7 +462,6 @@ export default function OwnerMessagesPage() {
     <div style={styles.page(accent)}>
       <style>{css(accent)}</style>
 
-      {/* Header */}
       <div style={styles.header}>
         <button style={styles.backBtn} onClick={goBack} title="Back">
           ←
@@ -453,7 +488,6 @@ export default function OwnerMessagesPage() {
         </button>
       </div>
 
-      {/* Search */}
       <div style={styles.searchWrap}>
         <span style={{ opacity: 0.9 }}>🔎</span>
         <input
@@ -469,7 +503,6 @@ export default function OwnerMessagesPage() {
         ) : null}
       </div>
 
-      {/* Error */}
       {error ? (
         <div style={styles.errorBanner}>
           <div style={styles.errorText}>{error}</div>
@@ -479,7 +512,6 @@ export default function OwnerMessagesPage() {
         </div>
       ) : null}
 
-      {/* Body */}
       {loading ? (
         <div style={styles.center}>
           <div className="spinner" />
@@ -493,9 +525,7 @@ export default function OwnerMessagesPage() {
       ) : visibleThreads.length === 0 ? (
         <div style={styles.center}>
           <div style={styles.emptyTitle}>No conversations yet</div>
-          <div style={styles.muted}>
-            Once people start messaging you, their chats will appear here.
-          </div>
+          <div style={styles.muted}>Once people start messaging you, their chats will appear here.</div>
         </div>
       ) : (
         <div style={styles.list}>
@@ -511,9 +541,7 @@ export default function OwnerMessagesPage() {
             const isAuth = t?.threadType === "auth" || (!!t?.userId && !t?.contact);
 
             const authUser = pickAuthUserObject(t);
-            const authMeta =
-              authUser?.email ||
-              (t?.userId ? `${String(t.userId).slice(0, 12)}…` : "");
+            const authMeta = authUser?.email || (t?.userId ? `${String(t.userId).slice(0, 12)}…` : "");
 
             const key =
               (t?.threadType === "auth"
@@ -745,7 +773,13 @@ const styles = {
 
   time: { color: "#9ca3af", fontSize: 11 },
 
-  center: { padding: 26, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 },
+  center: {
+    padding: 26,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 10,
+  },
   emptyTitle: { color: "#fff", fontSize: 18, fontWeight: 900 },
   muted: { color: "#cfd3dc", fontSize: 13, textAlign: "center" },
 };

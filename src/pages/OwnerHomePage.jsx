@@ -1,6 +1,7 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — HARDENED + CLEANED
+// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — FIXED API BASE (NO MORE 404)
 // Route: /world/:profileKey/owner/home
 //
+// ✅ FIX: ownerFetchRawWeb now calls API_BASE (backend), not same-origin
 // ✅ NO "lamont" fallback anywhere
 // ✅ profileKey resolved as: route param -> location.state -> localStorage('profileKey')
 // ✅ If missing profileKey: blocks API + shows warning banner
@@ -11,14 +12,20 @@
 // ✅ FIX: removed profileKey localStorage fallback inside getOwnerToken (no cross-profile leakage)
 // ✅ FIX: stable route mapping + built route set
 //
-// Requires:
-// - bootRemoteConfigOnce() already runs in App.jsx BootGate ✅
-// - getProfileByKey(profileKey) from your profileRegistry (remote-config backed)
-// - owner token stored by OwnerLoginPage into localStorage under ownerToken:<profileKey>
+// NOTE:
+// Set Render env var on indiverse-web:
+//   VITE_API_BASE_URL=https://indiverse-backend.onrender.com
+//
+// Owner token stored by OwnerLoginPage into localStorage under ownerToken:<profileKey>
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { getProfileByKey } from '../services/profileRegistry';
+console.log("VITE_API_BASE_URL at runtime:", import.meta.env.VITE_API_BASE_URL);
+
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL?.trim() ||
+  'https://indiverse-backend.onrender.com';
 
 const SPEED = 0.55;
 const AMP_BOOST = 1.1;
@@ -36,6 +43,17 @@ const FALLBACK_OWNER_ITEMS = [
 
 function normalizeProfileKey(pk) {
   return String(pk || '').trim().toLowerCase();
+}
+
+function clean(url) {
+  return String(url || '').replace(/\/+$/, '');
+}
+
+function joinUrl(base, path) {
+  const b = clean(base);
+  const p = String(path || '');
+  if (!p) return b;
+  return `${b}${p.startsWith('/') ? p : `/${p}`}`;
 }
 
 function normalizeOwnerItems(profile) {
@@ -72,6 +90,14 @@ function getOwnerToken(profileKey) {
   }
 }
 
+function clearOwnerToken(profileKey) {
+  try {
+    const k = normalizeProfileKey(profileKey);
+    if (!k) return;
+    localStorage.removeItem(ownerTokenKey(k));
+  } catch {}
+}
+
 function getActiveProfileKeyWeb() {
   try {
     return normalizeProfileKey(localStorage.getItem('profileKey'));
@@ -88,20 +114,37 @@ async function readJsonSafe(res) {
   }
 }
 
-// ✅ web version of ownerFetchRaw (no throw, returns Response)
+// ✅ web version of ownerFetchRaw (NO THROW, returns Response)
+// ✅ FIX: ALWAYS hits API_BASE, never same-origin
 async function ownerFetchRawWeb(path, { profileKey, method = 'GET', body } = {}) {
   const pk = normalizeProfileKey(profileKey);
   const token = getOwnerToken(pk);
 
-  return fetch(path, {
+  const url = joinUrl(API_BASE, path);
+
+  // 🔎 Keep this log while stabilizing:
+  console.log('[ownerFetchRawWeb]', method, url, 'pk=', pk, 'hasToken=', !!token);
+
+  const res = await fetch(url, {
     method,
     headers: {
-      ...(body ? { 'content-type': 'application/json' } : {}),
+      Accept: 'application/json',
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
       'x-profile-key': pk,
+      X-Profile: pk,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body,
+    mode: 'cors',
+    credentials: 'include',
+    cache: 'no-store',
   });
+
+  if ((res.status === 401 || res.status === 403) && pk) {
+    clearOwnerToken(pk);
+  }
+
+  return res;
 }
 
 // --- Ionicon name -> emoji (web stand-in) ---
@@ -122,7 +165,6 @@ function ionToEmoji(name = '') {
 function registerOwnerPushTokenWeb(profileKey) {
   void profileKey;
   // Web push is totally different; keep as a no-op for now.
-  // Later: service workers + VAPID + permission prompts (per profile).
 }
 
 export default function OwnerHomePage() {
@@ -134,13 +176,12 @@ export default function OwnerHomePage() {
   const stateProfileKey = normalizeProfileKey(location?.state?.profileKey);
   const storedProfileKey = getActiveProfileKeyWeb();
 
-  // ✅ Resolve profileKey: route param -> state -> localStorage only (NO lamont fallback)
+  // ✅ Resolve profileKey: route param -> state -> localStorage only
   const resolvedKey = routeProfileKey || stateProfileKey || storedProfileKey || '';
   const [profileKey, setProfileKey] = useState(resolvedKey || null);
 
   const [statusText, setStatusText] = useState('Synchronizing owner profile…');
   const [statusLevel, setStatusLevel] = useState('ok'); // ok | warn | err
-
   const [bgUrl, setBgUrl] = useState(location?.state?.bgUrl || null);
 
   // For fade-in
@@ -153,7 +194,7 @@ export default function OwnerHomePage() {
 
   useEffect(() => setMounted(true), []);
 
-  // Resolve profileKey again if route changes
+  // Resolve profileKey again if route/state changes
   useEffect(() => {
     const next = routeProfileKey || stateProfileKey || storedProfileKey || '';
     setProfileKey(next ? next : null);
@@ -252,7 +293,8 @@ export default function OwnerHomePage() {
     };
   }, [profileKey, goOwnerLogin]);
 
-  const statusColor = statusLevel === 'ok' ? '#22c55e' : statusLevel === 'warn' ? '#facc15' : '#f97373';
+  const statusColor =
+    statusLevel === 'ok' ? '#22c55e' : statusLevel === 'warn' ? '#facc15' : '#f97373';
 
   const handleBackToMain = () => {
     if (!profileKey) {
@@ -279,19 +321,16 @@ export default function OwnerHomePage() {
       ownerplaylist: 'playlist',
       ownermusic: 'music',
       ownerfashion: 'fashion',
-    
 
       ownerflowerorders: 'flowerorders',
       ownerproducts: 'products',
       ownerportfolio: 'portfolio',
-
     }),
     []
   );
 
   // ✅ routes you have ACTUALLY built in App.jsx
-// ✅ add Fashion to the list of routes you've actually built
-const builtOwnerRoutes = useMemo(
+  const builtOwnerRoutes = useMemo(
     () =>
       new Set([
         'home',
@@ -305,73 +344,62 @@ const builtOwnerRoutes = useMemo(
         'messages',
         'chat',
         'fashion',
-        'flowerorders', // ✅ ADD THIS (owner flower orders exists)
+        'flowerorders',
         'portfolio',
-
       ]),
     []
   );
-  
-  
 
   const handleTilePress = (tile) => {
     if (!tile?.to) return;
-  
+
     if (!profileKey) {
       setStatusText('Missing profileKey. Cannot open owner tools.');
       setStatusLevel('warn');
       return;
     }
-  
+
     const raw = String(tile.to || '').trim().toLowerCase();
-  
-    // ✅ PORTAL SPECIAL-CASE (web routes are /world/:profileKey/portal[/portalKey])
-    // Supports tile.to values like:
-    // - "portal"
-    // - "portal:<portalKey>"
-    // - "linkportal"
-    // - "ownerportal"
-    // Also supports tile.params.portalKey or tile.params.portal object
+
+    // ✅ PORTAL SPECIAL-CASE
     const isPortal =
       raw === 'portal' ||
       raw.startsWith('portal:') ||
       raw === 'linkportal' ||
       raw === 'ownerportal';
-  
+
     if (isPortal) {
       const portalKeyFromTo = raw.startsWith('portal:') ? raw.split(':')[1] : null;
       const portalKey = String(tile?.params?.portalKey || portalKeyFromTo || '').trim();
-  
+
       const base = `/world/${encodeURIComponent(profileKey)}/portal`;
-  
+
       navigate(portalKey ? `${base}/${encodeURIComponent(portalKey)}` : base, {
         state: {
           profileKey,
           bgUrl,
-          // if you pass a portal object in params, LinkPortalPage prefers it
           ...(tile?.params?.portal ? { portal: tile.params.portal } : {}),
           ...(tile?.params || {}),
         },
       });
       return;
     }
-  
+
     // ✅ normal owner route flow
     const toolKey = routeMap[raw] || raw.replace(/^owner/, '');
-  
+
     if (builtOwnerRoutes.has(toolKey)) {
       navigate(`/world/${encodeURIComponent(profileKey)}/owner/${toolKey}`, {
         state: { profileKey, bgUrl, ...(tile.params || {}) },
       });
       return;
     }
-  
+
     // fallback: route to placeholder feature page
     navigate(`/world/${encodeURIComponent(profileKey)}/${encodeURIComponent(raw)}`, {
       state: { profileKey, bgUrl, ...(tile.params || {}) },
     });
   };
-  
 
   // compute drift transforms
   const tileTransform = (idx) => {
@@ -461,7 +489,7 @@ const styles = {
     overflow: 'hidden',
     position: 'relative',
     fontFamily:
-      'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+      'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UIEmoji"',
   },
   glowOne: {
     position: 'fixed',
