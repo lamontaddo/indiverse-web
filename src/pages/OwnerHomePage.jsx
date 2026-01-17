@@ -120,25 +120,20 @@ async function ownerFetchRawWeb(path, { profileKey, method = 'GET', body } = {})
   const pk = normalizeProfileKey(profileKey);
   const token = getOwnerToken(pk);
 
-  const url = joinUrl(API_BASE, path);
+  const headers = {
+    ...(body ? { 'Content-Type': 'application/json' } : {}),
+    'x-profile-key': pk,
+    'X-Profile': pk,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 
-  // 🔎 Keep this log while stabilizing:
-  console.log('[ownerFetchRawWeb]', method, url, 'pk=', pk, 'hasToken=', !!token);
-
-  const res = await fetch(url, {
+  return fetch(path, {
     method,
-    headers: {
-      Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      'x-profile-key': pk,
-      X-Profile: pk,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers,
     body,
-    mode: 'cors',
-    credentials: 'include',
-    cache: 'no-store',
   });
+}
+
 
   if ((res.status === 401 || res.status === 403) && pk) {
     clearOwnerToken(pk);
