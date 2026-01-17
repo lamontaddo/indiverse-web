@@ -1,27 +1,18 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — FIXED API BASE (NO MORE 404)
+// src/pages/OwnerHomePage.jsx
 // Route: /world/:profileKey/owner/home
 //
-// ✅ FIX: ownerFetchRawWeb now calls API_BASE (backend), not same-origin
-// ✅ NO "lamont" fallback anywhere
-// ✅ profileKey resolved as: route param -> location.state -> localStorage('profileKey')
-// ✅ If missing profileKey: blocks API + shows warning banner
-// ✅ Owner auth ping uses ownerFetchRawWeb so we can handle 401/403 without throwing
-// ✅ Push token registration is stubbed (web) but kept per-profile hook point
-// ✅ Tile navigation always passes { profileKey } and keeps bgUrl in router state
-// ✅ FIX: removed duplicate keys (ownermessages/ownercontacts/ownerplaylist)
-// ✅ FIX: removed profileKey localStorage fallback inside getOwnerToken (no cross-profile leakage)
-// ✅ FIX: stable route mapping + built route set
-//
-// NOTE:
-// Set Render env var on indiverse-web:
-//   VITE_API_BASE_URL=https://indiverse-backend.onrender.com
-//
-// Owner token stored by OwnerLoginPage into localStorage under ownerToken:<profileKey>
+// ✅ Uses backend API_BASE (no same-origin calls)
+// ✅ No silent profile fallback
+// ✅ Hardened owner auth ping
+// ✅ Build-safe (no stray braces)
 
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { getProfileByKey } from '../services/profileRegistry';
-console.log("VITE_API_BASE_URL at runtime:", import.meta.env.VITE_API_BASE_URL);
+
+/* ============================================================
+   ENV / CONSTANTS
+============================================================ */
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.trim() ||
@@ -30,49 +21,12 @@ const API_BASE =
 const SPEED = 0.55;
 const AMP_BOOST = 1.1;
 
-// fallback if a profile has no ownerItems
-const FALLBACK_OWNER_ITEMS = [
-  { key: 'about', label: 'About', ionicon: 'person-circle', to: 'ownerabout', size: 130 },
-  { key: 'contacts', label: 'Contacts', ionicon: 'people', to: 'ownercontacts', size: 140 },
-  { key: 'messages', label: 'Messages', ionicon: 'chatbubbles', to: 'ownermessages', size: 130 },
-  { key: 'playlist', label: 'Playlist', ionicon: 'list', to: 'ownerplaylist', size: 145 },
-  { key: 'music', label: 'Music', ionicon: 'musical-notes', to: 'ownermusic', size: 140 },
-  { key: 'fashion', label: 'Fashion', ionicon: 'shirt', to: 'ownerfashion', size: 135 },
-  { key: 'videos', label: 'Videos', ionicon: 'videocam', to: 'ownervideos', size: 135 },
-];
+/* ============================================================
+   HELPERS
+============================================================ */
 
 function normalizeProfileKey(pk) {
   return String(pk || '').trim().toLowerCase();
-}
-
-function clean(url) {
-  return String(url || '').replace(/\/+$/, '');
-}
-
-function joinUrl(base, path) {
-  const b = clean(base);
-  const p = String(path || '');
-  if (!p) return b;
-  return `${b}${p.startsWith('/') ? p : `/${p}`}`;
-}
-
-function normalizeOwnerItems(profile) {
-  const raw =
-    Array.isArray(profile?.ownerItems) && profile.ownerItems.length
-      ? profile.ownerItems
-      : FALLBACK_OWNER_ITEMS;
-
-  return raw
-    .filter(Boolean)
-    .map((it, idx) => ({
-      key: String(it.key ?? `owner-${idx}`),
-      label: String(it.label ?? it.key ?? 'Item'),
-      ionicon: it.ionicon || it.icon || 'ellipse',
-      to: String(it.to ?? it.key ?? ''),
-      size: Number(it.size ?? 132),
-      params: it.params || null,
-    }))
-    .filter((x) => !!x.to);
 }
 
 function ownerTokenKey(profileKey) {
@@ -80,11 +34,8 @@ function ownerTokenKey(profileKey) {
 }
 
 function getOwnerToken(profileKey) {
-  // ✅ HARDENED: only per-profile token (no generic 'ownerToken' fallback)
   try {
-    const k = normalizeProfileKey(profileKey);
-    if (!k) return '';
-    return localStorage.getItem(ownerTokenKey(k)) || '';
+    return localStorage.getItem(ownerTokenKey(profileKey)) || '';
   } catch {
     return '';
   }
@@ -92,9 +43,7 @@ function getOwnerToken(profileKey) {
 
 function clearOwnerToken(profileKey) {
   try {
-    const k = normalizeProfileKey(profileKey);
-    if (!k) return;
-    localStorage.removeItem(ownerTokenKey(k));
+    localStorage.removeItem(ownerTokenKey(profileKey));
   } catch {}
 }
 
@@ -114,8 +63,10 @@ async function readJsonSafe(res) {
   }
 }
 
-// ✅ web version of ownerFetchRaw (NO THROW, returns Response)
-// ✅ FIX: ALWAYS hits API_BASE, never same-origin
+/* ============================================================
+   API (WEB OWNER)
+============================================================ */
+
 async function ownerFetchRawWeb(path, { profileKey, method = 'GET', body } = {}) {
   const pk = normalizeProfileKey(profileKey);
   const token = getOwnerToken(pk);
@@ -123,134 +74,95 @@ async function ownerFetchRawWeb(path, { profileKey, method = 'GET', body } = {})
   const headers = {
     ...(body ? { 'Content-Type': 'application/json' } : {}),
     'x-profile-key': pk,
-    'X-Profile': pk,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  return fetch(path, {
+  return fetch(`${API_BASE}${path}`, {
     method,
     headers,
     body,
   });
 }
 
+/* ============================================================
+   UI HELPERS
+============================================================ */
 
-  if ((res.status === 401 || res.status === 403) && pk) {
-    clearOwnerToken(pk);
-  }
-
-  return res;
-}
-
-// --- Ionicon name -> emoji (web stand-in) ---
 function ionToEmoji(name = '') {
   const k = String(name).toLowerCase();
   if (k.includes('person')) return '👤';
-  if (k.includes('people') || k.includes('contacts')) return '👥';
+  if (k.includes('people')) return '👥';
   if (k.includes('chat')) return '💬';
-  if (k.includes('list') || k.includes('playlist')) return '📃';
-  if (k.includes('music') || k.includes('musical')) return '🎵';
-  if (k.includes('shirt') || k.includes('fashion')) return '👕';
-  if (k.includes('video') || k.includes('videocam')) return '🎬';
-  if (k.includes('home')) return '🏠';
+  if (k.includes('music')) return '🎵';
+  if (k.includes('video')) return '🎬';
+  if (k.includes('shirt')) return '👕';
+  if (k.includes('list')) return '📃';
   return '◉';
 }
 
-// --- Web "push token" stub (keep hook point) ---
-function registerOwnerPushTokenWeb(profileKey) {
-  void profileKey;
-  // Web push is totally different; keep as a no-op for now.
+function hexToRgba(hex, a = 1) {
+  const h = String(hex || '').replace('#', '');
+  const f = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  if (f.length !== 6) return `rgba(129,140,248,${a})`;
+  const r = parseInt(f.slice(0, 2), 16);
+  const g = parseInt(f.slice(2, 4), 16);
+  const b = parseInt(f.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
 }
+
+/* ============================================================
+   FALLBACK OWNER ITEMS
+============================================================ */
+
+const FALLBACK_OWNER_ITEMS = [
+  { key: 'about', label: 'About', ionicon: 'person-circle', to: 'about', size: 130 },
+  { key: 'contacts', label: 'Contacts', ionicon: 'people', to: 'contacts', size: 140 },
+  { key: 'messages', label: 'Messages', ionicon: 'chatbubbles', to: 'messages', size: 130 },
+  { key: 'music', label: 'Music', ionicon: 'musical-notes', to: 'music', size: 140 },
+  { key: 'videos', label: 'Videos', ionicon: 'videocam', to: 'videos', size: 135 },
+];
+
+/* ============================================================
+   PAGE
+============================================================ */
 
 export default function OwnerHomePage() {
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
 
-  const routeProfileKey = normalizeProfileKey(params?.profileKey);
-  const stateProfileKey = normalizeProfileKey(location?.state?.profileKey);
-  const storedProfileKey = getActiveProfileKeyWeb();
+  const routeKey = normalizeProfileKey(params?.profileKey);
+  const stateKey = normalizeProfileKey(location?.state?.profileKey);
+  const storedKey = getActiveProfileKeyWeb();
 
-  // ✅ Resolve profileKey: route param -> state -> localStorage only
-  const resolvedKey = routeProfileKey || stateProfileKey || storedProfileKey || '';
-  const [profileKey, setProfileKey] = useState(resolvedKey || null);
+  const [profileKey, setProfileKey] = useState(routeKey || stateKey || storedKey || '');
+  const [status, setStatus] = useState('Synchronizing owner profile…');
+  const [statusLevel, setStatusLevel] = useState('ok');
 
-  const [statusText, setStatusText] = useState('Synchronizing owner profile…');
-  const [statusLevel, setStatusLevel] = useState('ok'); // ok | warn | err
-  const [bgUrl, setBgUrl] = useState(location?.state?.bgUrl || null);
-
-  // For fade-in
-  const [mounted, setMounted] = useState(false);
-
-  // Drift tick
-  const rafRef = useRef(0);
-  const t0Ref = useRef(performance.now());
-  const [, setTick] = useState(0);
-
-  useEffect(() => setMounted(true), []);
-
-  // Resolve profileKey again if route/state changes
   useEffect(() => {
-    const next = routeProfileKey || stateProfileKey || storedProfileKey || '';
-    setProfileKey(next ? next : null);
-    setBgUrl(location?.state?.bgUrl || null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeProfileKey, stateProfileKey, location?.state?.bgUrl]);
+    setProfileKey(routeKey || stateKey || storedKey || '');
+  }, [routeKey, stateKey, storedKey]);
 
-  const profile = useMemo(() => (profileKey ? getProfileByKey(profileKey) : null), [profileKey]);
-
-  const OWNER_NAME = profile?.label || 'Owner';
-  const OWNER_NAME_CAPS = String(profile?.brandTopTitle || profile?.label || 'OWNER').toUpperCase();
-  const accent = profile?.accent || '#818cf8';
-
-  const TILES = useMemo(() => normalizeOwnerItems(profile), [profile]);
-
-  // ✅ stable per-tile phases for drift
-  const phases = useMemo(() => {
-    return TILES.map((_, idx) => ({
-      ax: [5, 6, 4, 6, 5][idx % 5] * AMP_BOOST,
-      ay: [4, 4, 6, 6, 5][idx % 5] * AMP_BOOST,
-      sx: 0.35 + idx * 0.03,
-      sy: 0.3 + idx * 0.025,
-    }));
-  }, [TILES]);
-
-  // animation tick (drift)
-  useEffect(() => {
-    const loop = () => {
-      rafRef.current = requestAnimationFrame(loop);
-      setTick((x) => (x + 1) % 600000);
-    };
-    rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, []);
-
-  const goOwnerLogin = useCallback(
-    (k) => {
-      const key = normalizeProfileKey(k) || profileKey || '';
-      if (!key) {
-        navigate('/', { replace: true });
-        return;
-      }
-      navigate(`/world/${encodeURIComponent(key)}/owner/login`, {
-        replace: true,
-        state: { profileKey: key, bgUrl },
-      });
-    },
-    [navigate, profileKey, bgUrl]
+  const profile = useMemo(
+    () => (profileKey ? getProfileByKey(profileKey) : null),
+    [profileKey]
   );
 
-  // Owner auth ping + push token (per-profile)
+  const ownerItems =
+    Array.isArray(profile?.ownerItems) && profile.ownerItems.length
+      ? profile.ownerItems
+      : FALLBACK_OWNER_ITEMS;
+
+  /* ============================================================
+     AUTH PING
+  ============================================================ */
+
   useEffect(() => {
     if (!profileKey) {
-      setStatusText('Missing profileKey. Open OwnerHome with { profileKey }.');
+      setStatus('Missing profileKey.');
       setStatusLevel('warn');
       return;
     }
-
-    try {
-      registerOwnerPushTokenWeb(profileKey);
-    } catch {}
 
     let cancelled = false;
 
@@ -262,376 +174,150 @@ export default function OwnerHomePage() {
         if (cancelled) return;
 
         if (res.status === 401 || res.status === 403) {
-          setStatusText('Session expired. Please log in again.');
-          setStatusLevel('warn');
-          goOwnerLogin(profileKey);
+          clearOwnerToken(profileKey);
+          navigate(`/world/${profileKey}/owner/login`, { replace: true });
           return;
         }
 
-        if (!res.ok || data?.ok === false) {
-          setStatusText(data?.error || data?.message || `Sync failed (${res.status})`);
+        if (!res.ok) {
+          setStatus(data?.error || `Sync failed (${res.status})`);
           setStatusLevel('warn');
           return;
         }
 
-        setStatusText('Owner link secure. All systems nominal.');
+        setStatus('Owner session active.');
         setStatusLevel('ok');
-      } catch (err) {
-        if (cancelled) return;
-        setStatusText(err?.message || 'Unable to sync profile. Check connection or token.');
-        setStatusLevel('warn');
+      } catch {
+        if (!cancelled) {
+          setStatus('Backend unreachable.');
+          setStatusLevel('warn');
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [profileKey, goOwnerLogin]);
+  }, [profileKey, navigate]);
 
-  const statusColor =
-    statusLevel === 'ok' ? '#22c55e' : statusLevel === 'warn' ? '#facc15' : '#f97373';
-
-  const handleBackToMain = () => {
-    if (!profileKey) {
-      navigate('/', { replace: false });
-      return;
-    }
-    navigate(`/world/${encodeURIComponent(profileKey)}`, {
-      state: { profileKey, bgUrl },
-    });
-  };
-
-  // ✅ ONE canonical mapping (no duplicates)
-  const routeMap = useMemo(
-    () => ({
-      ownerabout: 'about',
-      ownerhome: 'home',
-      ownerlogin: 'login',
-      ownervideos: 'videos',
-
-      ownercontacts: 'contacts',
-      ownermessages: 'messages',
-      ownerchat: 'chat',
-
-      ownerplaylist: 'playlist',
-      ownermusic: 'music',
-      ownerfashion: 'fashion',
-
-      ownerflowerorders: 'flowerorders',
-      ownerproducts: 'products',
-      ownerportfolio: 'portfolio',
-    }),
-    []
-  );
-
-  // ✅ routes you have ACTUALLY built in App.jsx
-  const builtOwnerRoutes = useMemo(
-    () =>
-      new Set([
-        'home',
-        'about',
-        'login',
-        'videos',
-        'products',
-        'playlist',
-        'contacts',
-        'music',
-        'messages',
-        'chat',
-        'fashion',
-        'flowerorders',
-        'portfolio',
-      ]),
-    []
-  );
-
-  const handleTilePress = (tile) => {
-    if (!tile?.to) return;
-
-    if (!profileKey) {
-      setStatusText('Missing profileKey. Cannot open owner tools.');
-      setStatusLevel('warn');
-      return;
-    }
-
-    const raw = String(tile.to || '').trim().toLowerCase();
-
-    // ✅ PORTAL SPECIAL-CASE
-    const isPortal =
-      raw === 'portal' ||
-      raw.startsWith('portal:') ||
-      raw === 'linkportal' ||
-      raw === 'ownerportal';
-
-    if (isPortal) {
-      const portalKeyFromTo = raw.startsWith('portal:') ? raw.split(':')[1] : null;
-      const portalKey = String(tile?.params?.portalKey || portalKeyFromTo || '').trim();
-
-      const base = `/world/${encodeURIComponent(profileKey)}/portal`;
-
-      navigate(portalKey ? `${base}/${encodeURIComponent(portalKey)}` : base, {
-        state: {
-          profileKey,
-          bgUrl,
-          ...(tile?.params?.portal ? { portal: tile.params.portal } : {}),
-          ...(tile?.params || {}),
-        },
-      });
-      return;
-    }
-
-    // ✅ normal owner route flow
-    const toolKey = routeMap[raw] || raw.replace(/^owner/, '');
-
-    if (builtOwnerRoutes.has(toolKey)) {
-      navigate(`/world/${encodeURIComponent(profileKey)}/owner/${toolKey}`, {
-        state: { profileKey, bgUrl, ...(tile.params || {}) },
-      });
-      return;
-    }
-
-    // fallback: route to placeholder feature page
-    navigate(`/world/${encodeURIComponent(profileKey)}/${encodeURIComponent(raw)}`, {
-      state: { profileKey, bgUrl, ...(tile.params || {}) },
-    });
-  };
-
-  // compute drift transforms
-  const tileTransform = (idx) => {
-    const now = performance.now();
-    const t = ((now - t0Ref.current) / 1000) * SPEED;
-
-    const p = phases[idx] || { ax: 5, ay: 4, sx: 0.35, sy: 0.3 };
-    const dx = Math.sin(t * p.sx) * p.ax;
-    const dy = Math.cos(t * p.sy) * p.ay;
-
-    return `translate3d(${dx}px, ${dy}px, 0)`;
-  };
+  /* ============================================================
+     RENDER
+  ============================================================ */
 
   return (
     <div style={styles.page}>
-      <style>{css}</style>
+      <div style={{ ...styles.glow, background: hexToRgba(profile?.accent, 0.35) }} />
 
-      {/* subtle glow */}
-      <div style={{ ...styles.glowOne, background: hexToRgba(accent, 0.35) }} />
-      <div style={styles.glowTwo} />
+      <div style={styles.header}>
+        <div>
+          <div style={styles.title}>{profile?.label || 'OWNER'}</div>
+          <div style={styles.subtitle}>Owner Console</div>
+        </div>
+        <button
+          style={styles.back}
+          onClick={() => navigate(`/world/${profileKey}`)}
+        >
+          🏠 Back
+        </button>
+      </div>
 
-      <div className={`oh-wrap ${mounted ? 'oh-in' : ''}`}>
-        <div style={styles.headerWrap}>
-          <div>
-            <div style={styles.title}>{OWNER_NAME_CAPS}</div>
-            <div style={styles.subtitle}>Owner Console</div>
-
-            {!profileKey ? (
-              <div style={{ ...styles.subtitle, color: '#fca5a5', marginTop: 8 }}>
-                Missing profileKey (open with {'{'} profileKey {'}'}).
-              </div>
-            ) : null}
-          </div>
-
-          <button className="oh-backBtn" onClick={handleBackToMain}>
-            <span style={{ fontSize: 14 }}>🏠</span>
-            <span style={{ fontWeight: 800, letterSpacing: 0.7, fontSize: 12 }}>Back to app</span>
+      <div style={styles.grid}>
+        {ownerItems.map((item, i) => (
+          <button
+            key={item.key}
+            style={{ ...styles.tile, width: item.size, height: item.size }}
+            onClick={() =>
+              navigate(`/world/${profileKey}/owner/${item.to}`, {
+                state: { profileKey },
+              })
+            }
+          >
+            <div style={styles.icon}>{ionToEmoji(item.ionicon)}</div>
+            <div style={styles.label}>{item.label}</div>
           </button>
-        </div>
+        ))}
+      </div>
 
-        <div style={styles.field}>
-          {TILES.map((t, idx) => (
-            <button
-              key={t.key}
-              className="oh-tile"
-              style={{ width: t.size, height: t.size, transform: tileTransform(idx) }}
-              onClick={() => handleTilePress(t)}
-              title={t.label}
-            >
-              <div className="oh-tileInner">
-                <div className="oh-icon" aria-hidden>
-                  {ionToEmoji(t.ionicon)}
-                </div>
-                <div className="oh-label">{t.label}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        <div style={styles.bottom}>
-          <div style={styles.bottomPill}>
-            <span style={{ ...styles.statusDot, background: statusColor }} />
-            <div style={styles.bottomText}>{OWNER_NAME + ' mode • ' + statusText}</div>
-          </div>
-        </div>
+      <div style={styles.status}>
+        <span
+          style={{
+            ...styles.dot,
+            background:
+              statusLevel === 'ok' ? '#22c55e' : '#facc15',
+          }}
+        />
+        {status}
       </div>
     </div>
   );
 }
 
-/** helpers */
-function hexToRgba(hex, a = 1) {
-  const h = String(hex || '').replace('#', '').trim();
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  if (full.length !== 6) return `rgba(129,140,248,${a})`;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${a})`;
-}
+/* ============================================================
+   STYLES
+============================================================ */
 
 const styles = {
   page: {
     minHeight: '100vh',
-    background: 'linear-gradient(180deg, #020617, #0b1220, #020617)',
+    background: '#020617',
     color: '#e5e7eb',
-    overflow: 'hidden',
+    padding: 22,
     position: 'relative',
-    fontFamily:
-      'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UIEmoji"',
   },
-  glowOne: {
+  glow: {
     position: 'fixed',
     width: 260,
     height: 260,
-    borderRadius: 999,
-    top: -40,
+    borderRadius: '50%',
+    top: -60,
     right: -60,
-    opacity: 0.65,
-    filter: 'blur(80px)',
+    filter: 'blur(90px)',
     pointerEvents: 'none',
   },
-  glowTwo: {
-    position: 'fixed',
-    width: 260,
-    height: 260,
-    borderRadius: 999,
-    background: 'rgba(236,72,153,0.26)',
-    bottom: -60,
-    left: -40,
-    opacity: 0.55,
-    filter: 'blur(80px)',
-    pointerEvents: 'none',
-  },
-  headerWrap: {
-    paddingTop: 46,
-    paddingLeft: 22,
-    paddingRight: 22,
+  header: {
     display: 'flex',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 14,
+    alignItems: 'center',
+    marginBottom: 22,
   },
-  title: { fontSize: 30, fontWeight: 900, letterSpacing: 4 },
-  subtitle: {
-    marginTop: 8,
-    color: '#9ca3af',
-    letterSpacing: 0.9,
-    fontSize: 12,
-    textTransform: 'uppercase',
+  title: { fontSize: 28, fontWeight: 900 },
+  subtitle: { fontSize: 12, opacity: 0.7 },
+  back: {
+    background: '#0f172a',
+    border: '1px solid #334155',
+    borderRadius: 999,
+    padding: '8px 12px',
+    color: '#fff',
+    cursor: 'pointer',
   },
-  field: {
-    paddingTop: 18,
-    paddingLeft: 18,
-    paddingRight: 18,
+  grid: {
     display: 'flex',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    alignContent: 'flex-start',
     gap: 16,
-    minHeight: 'calc(100vh - 210px)',
   },
-  bottom: {
-    paddingLeft: 22,
-    paddingRight: 22,
-    paddingBottom: 22,
+  tile: {
+    borderRadius: 22,
+    background: '#0f172a',
+    border: '1px solid #334155',
     display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
     justifyContent: 'center',
+    cursor: 'pointer',
   },
-  bottomPill: {
+  icon: { fontSize: 28, marginBottom: 8 },
+  label: { fontSize: 13, fontWeight: 700 },
+  status: {
+    marginTop: 20,
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
-    padding: '10px 14px',
-    borderRadius: 999,
-    background: 'rgba(15,23,42,0.85)',
-    border: '1px solid rgba(148,163,184,0.6)',
-    maxWidth: 760,
-    width: 'fit-content',
+    gap: 8,
+    fontSize: 12,
+    opacity: 0.8,
   },
-  bottomText: { color: '#9ca3af', fontSize: 12, letterSpacing: 0.7, whiteSpace: 'nowrap' },
-  statusDot: { width: 8, height: 8, borderRadius: 999, display: 'inline-block' },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+  },
 };
-
-const css = `
-.oh-wrap{
-  position: relative;
-  z-index: 2;
-  min-height: 100vh;
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 650ms ease, transform 650ms ease;
-}
-.oh-in{ opacity: 1; transform: translateY(0); }
-
-.oh-backBtn{
-  border-radius: 999px;
-  overflow: hidden;
-  border: 1px solid rgba(148,163,248,0.55);
-  background: rgba(15,23,42,0.65);
-  color: #e5e7eb;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  cursor: pointer;
-  box-shadow: 0 18px 36px rgba(0,0,0,0.35);
-}
-.oh-backBtn:active{ transform: scale(0.99); opacity: 0.92; }
-
-.oh-tile{
-  border: none;
-  border-radius: 26px;
-  overflow: hidden;
-  background: rgba(15,23,42,0.72);
-  border: 1px solid rgba(129,140,248,0.6);
-  box-shadow: 0 18px 40px rgba(0,0,0,0.40);
-  cursor: pointer;
-  transition: transform 140ms ease, opacity 140ms ease, border-color 140ms ease;
-  display:flex;
-  align-items: stretch;
-  justify-content: stretch;
-  padding: 0;
-}
-.oh-tile:hover{ border-color: rgba(34,211,238,0.45); }
-.oh-tile:active{ opacity: 0.95; }
-
-.oh-tileInner{
-  width: 100%;
-  height: 100%;
-  display:flex;
-  flex-direction: column;
-  align-items:center;
-  justify-content:center;
-  gap: 10px;
-  padding: 12px;
-  background:
-    radial-gradient(circle at 35% 20%, rgba(255,255,255,0.12), rgba(255,255,255,0.03) 55%, rgba(255,255,255,0) 70%);
-}
-
-.oh-icon{
-  font-size: 28px;
-  filter: drop-shadow(0 8px 18px rgba(0,0,0,0.35));
-}
-.oh-label{
-  color: #e5e7eb;
-  font-weight: 800;
-  letter-spacing: 0.8px;
-  font-size: 13px;
-  text-align: center;
-}
-
-@media (max-width: 520px){
-  .oh-label{ font-size: 12px; }
-}
-@media (prefers-reduced-motion: reduce){
-  .oh-wrap{ transition: none; }
-  .oh-tile{ transition: none; }
-}
-`;
