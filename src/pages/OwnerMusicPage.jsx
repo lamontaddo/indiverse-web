@@ -1,25 +1,34 @@
-// src/pages/OwnerMusicPage.jsx ✅ FULL DROP-IN (Web)
-// Route: /owner/:profileKey/music   (recommended)
-// Also supports missing param via localStorage activeProfileKey
+// src/pages/OwnerMusicPage.jsx ✅ FULL DROP-IN (Web) — FIXED ROUTE + ABSOLUTE API + NO CORS HEADER ISSUES
+// Route: /world/:profileKey/owner/music
 //
-// ✅ profileKey resolution: param wins; else localStorage activeProfileKey
-// ✅ ownerFetch includes { profileKey } always
-// ✅ unauthorized -> redirect to /owner/login?profileKey=...
-// ✅ parse json once
+// ✅ profileKey resolution: route param -> localStorage('profileKey')
+// ✅ ABSOLUTE backend calls via ownerApi.web (prevents indiverse-web /api 404)
+// ✅ Sends ONLY x-profile-key + Authorization (no X-Profile header)
+// ✅ 401/403 -> redirect to /world/:profileKey/owner/login (preserves next)
+// ✅ parse json safely
 // ✅ S3 PUT upload via fetch(uploadUrl, { method:'PUT', body:file })
+//
+// Requires:
+// - src/utils/ownerApi.web.js (exports ownerFetchRawWeb, ownerJsonWeb, normalizeProfileKey)
+// - your backend endpoints:
+//   GET  /api/owner/music/catalog
+//   POST /api/owner/music/upload-url
+//   POST /api/owner/music/albums
+//   PUT  /api/owner/music/albums/:id
+//   DELETE /api/owner/music/albums/:id
+//   POST /api/owner/music/tracks
+//   PUT  /api/owner/music/tracks/:id
+//   DELETE /api/owner/music/tracks/:id
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { ownerFetch } from "../services/ownerFetch";
+import { getProfileByKey } from "../services/profileRegistry";
+import { ownerFetchRawWeb, ownerJsonWeb, normalizeProfileKey } from "../utils/ownerApi.web";
 
 // ---------------- helpers ----------------
-function normPk(v) {
-  return String(v || "").trim().toLowerCase();
-}
-
 function getActiveProfileKeyWeb() {
   try {
-    return localStorage.getItem("activeProfileKey") || "";
+    return normalizeProfileKey(localStorage.getItem("profileKey"));
   } catch {
     return "";
   }
@@ -38,11 +47,11 @@ function toPriceCents(priceStr) {
 }
 
 async function safeJson(res) {
-  return res.json().catch(() => ({}));
-}
-
-function isUnauthorizedMessage(msg) {
-  return String(msg || "").toLowerCase().includes("unauthorized");
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
 }
 
 async function s3PutUpload({ uploadUrl, file, contentType }) {
@@ -81,11 +90,12 @@ export default function OwnerMusicPage() {
   const { profileKey: pkParam } = useParams();
   const location = useLocation();
 
-  // ✅ resolve pk: param wins, else localStorage
+  // ✅ resolve pk: param wins, else localStorage('profileKey')
   const [profileKey, setProfileKey] = useState(null);
   const [profileReady, setProfileReady] = useState(false);
 
-  const [OWNER_LABEL, setOwnerLabel] = useState("Owner");
+  const [ownerLabel, setOwnerLabel] = useState("Owner");
+  const [accent, setAccent] = useState("#22d3ee");
 
   // ===== DATA =====
   const [stats, setStats] = useState({ albumCount: 0, trackCount: 0 });
@@ -121,26 +131,31 @@ export default function OwnerMusicPage() {
   const [savingAlbum, setSavingAlbum] = useState(false);
   const [uploadingAlbumArtwork, setUploadingAlbumArtwork] = useState(false);
 
-  const canUseApi = useMemo(() => !!profileKey, [profileKey]);
-
   const goOwnerLogin = useCallback(
     (pk) => {
-      const k = normPk(pk || profileKey || pkParam);
-      // preserve return route
+      const k = normalizeProfileKey(pk || profileKey || pkParam);
       const next = encodeURIComponent(location.pathname + location.search);
-      nav(`/owner/login?profileKey=${encodeURIComponent(k)}&next=${next}`, { replace: true });
+      nav(`/world/${encodeURIComponent(k)}/owner/login`, {
+        replace: true,
+        state: { profileKey: k, bgUrl: location?.state?.bgUrl || null, next },
+      });
     },
-    [nav, profileKey, pkParam, location.pathname, location.search]
+    [nav, profileKey, pkParam, location.pathname, location.search, location?.state?.bgUrl]
   );
 
-  // ✅ resolve profileKey + label
+  // ✅ resolve profileKey + label/accent
   useEffect(() => {
-    const pk = normPk(pkParam) || normPk(getActiveProfileKeyWeb());
+    const pk = normalizeProfileKey(pkParam) || normalizeProfileKey(getActiveProfileKeyWeb());
     setProfileKey(pk || null);
 
-    // optional label: if you have a registry, wire it here.
-    // for now keep "Owner".
-    setOwnerLabel("Owner");
+    if (pk) {
+      const p = getProfileByKey(pk);
+      setOwnerLabel(p?.label || p?.brandTopTitle || "Owner");
+      setAccent(p?.accent || "#22d3ee");
+    } else {
+      setOwnerLabel("Owner");
+      setAccent("#22d3ee");
+    }
 
     setProfileReady(true);
   }, [pkParam]);
@@ -156,15 +171,16 @@ export default function OwnerMusicPage() {
 
     setLoading(true);
     try {
-      const res = await ownerFetch("/api/owner/music/catalog", { profileKey });
+      const res = await ownerFetchRawWeb("/api/owner/music/catalog", { profileKey });
       const data = await safeJson(res);
 
-      if (!res.ok) {
-        const msg = data?.error || "Failed to load catalog";
-        if (isUnauthorizedMessage(msg)) {
-          goOwnerLogin(profileKey);
-          return;
-        }
+      if (res.status === 401 || res.status === 403) {
+        goOwnerLogin(profileKey);
+        return;
+      }
+
+      if (!res.ok || data?.ok === false) {
+        const msg = data?.error || data?.message || "Failed to load catalog";
         throw new Error(msg);
       }
 
@@ -228,23 +244,18 @@ export default function OwnerMusicPage() {
         method = "PUT";
       }
 
-      const res = await ownerFetch(url, {
+      const data = await ownerJsonWeb(url, {
         profileKey,
         method,
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await safeJson(res);
 
-      if (!res.ok) {
-        const msg = data?.error || "Failed to save album";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
-      }
+      if (data?.ok === false) throw new Error(data?.error || "Failed to save album");
 
       await loadCatalog();
       setAlbumOpen(false);
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") return goOwnerLogin(profileKey);
       console.error("saveAlbum error:", e);
       alert(e?.message || "Could not save album.");
     } finally {
@@ -257,16 +268,16 @@ export default function OwnerMusicPage() {
     if (!confirm(`Delete album "${editingAlbum.title}"? Tracks will become singles.`)) return;
 
     try {
-      const res = await ownerFetch(`/api/owner/music/albums/${editingAlbum._id}`, {
+      const res = await ownerFetchRawWeb(`/api/owner/music/albums/${editingAlbum._id}`, {
         profileKey,
         method: "DELETE",
       });
-      const data = await safeJson(res);
 
-      if (!res.ok) {
-        const msg = data?.error || "Failed to delete album";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
+      if (res.status === 401 || res.status === 403) return goOwnerLogin(profileKey);
+
+      const data = await safeJson(res);
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || data?.message || "Failed to delete album");
       }
 
       await loadCatalog();
@@ -283,21 +294,18 @@ export default function OwnerMusicPage() {
 
     setUploadingAlbumArtwork(true);
     try {
-      const uploadRes = await ownerFetch("/api/owner/music/upload-url", {
+      const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name || "album-cover.jpg", contentType: file.type || "image/jpeg" }),
+        body: JSON.stringify({
+          filename: file.name || "album-cover.jpg",
+          contentType: file.type || "image/jpeg",
+        }),
       });
-      const uploadData = await safeJson(uploadRes);
 
-      if (!uploadRes.ok) {
-        const msg = uploadData?.error || "Failed to get artwork upload URL.";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
+      if (!uploadData?.uploadUrl || !uploadData?.key) {
+        throw new Error("Upload URL response missing uploadUrl/key");
       }
-
-      if (!uploadData?.uploadUrl || !uploadData?.key) throw new Error("Upload URL response missing uploadUrl/key");
 
       await s3PutUpload({ uploadUrl: uploadData.uploadUrl, file, contentType: file.type });
 
@@ -305,6 +313,7 @@ export default function OwnerMusicPage() {
       setAlbumCoverImageUrl(uploadData.publicUrl || URL.createObjectURL(file));
       alert("Album artwork uploaded.");
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") return goOwnerLogin(profileKey);
       console.error("album artwork upload error:", e);
       alert(e?.message || "Could not upload artwork.");
     } finally {
@@ -323,7 +332,6 @@ export default function OwnerMusicPage() {
     setFormS3KeyFull("");
     setFormCoverImageUrl("");
     setFormCoverImageKey("");
-
     setFormAlbumId(sortedAlbums?.[0]?._id || "");
     setTrackOpen(true);
   };
@@ -342,7 +350,6 @@ export default function OwnerMusicPage() {
 
     setFormCoverImageUrl(artworkUrl);
     setFormCoverImageKey(t?.coverImageKey || "");
-
     setTrackOpen(true);
   };
 
@@ -382,23 +389,13 @@ export default function OwnerMusicPage() {
         method = "PUT";
       }
 
-      const res = await ownerFetch(url, {
-        profileKey,
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await safeJson(res);
-
-      if (!res.ok) {
-        const msg = data?.error || "Failed to save track";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
-      }
+      const data = await ownerJsonWeb(url, { profileKey, method, body: JSON.stringify(payload) });
+      if (data?.ok === false) throw new Error(data?.error || "Failed to save track");
 
       await loadCatalog();
       setTrackOpen(false);
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") return goOwnerLogin(profileKey);
       console.error("saveTrack error:", e);
       alert(e?.message || "Could not save track.");
     } finally {
@@ -411,16 +408,16 @@ export default function OwnerMusicPage() {
     if (!confirm(`Delete track "${editingTrack.title}"?`)) return;
 
     try {
-      const res = await ownerFetch(`/api/owner/music/tracks/${editingTrack._id}`, {
+      const res = await ownerFetchRawWeb(`/api/owner/music/tracks/${editingTrack._id}`, {
         profileKey,
         method: "DELETE",
       });
-      const data = await safeJson(res);
 
-      if (!res.ok) {
-        const msg = data?.error || "Failed to delete track";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
+      if (res.status === 401 || res.status === 403) return goOwnerLogin(profileKey);
+
+      const data = await safeJson(res);
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || data?.message || "Failed to delete track");
       }
 
       await loadCatalog();
@@ -437,21 +434,18 @@ export default function OwnerMusicPage() {
 
     setUploadingTrackArtwork(true);
     try {
-      const uploadRes = await ownerFetch("/api/owner/music/upload-url", {
+      const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name || "cover.jpg", contentType: file.type || "image/jpeg" }),
+        body: JSON.stringify({
+          filename: file.name || "cover.jpg",
+          contentType: file.type || "image/jpeg",
+        }),
       });
-      const uploadData = await safeJson(uploadRes);
 
-      if (!uploadRes.ok) {
-        const msg = uploadData?.error || "Failed to get artwork upload URL.";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
+      if (!uploadData?.uploadUrl || !uploadData?.key) {
+        throw new Error("Upload URL response missing uploadUrl/key");
       }
-
-      if (!uploadData?.uploadUrl || !uploadData?.key) throw new Error("Upload URL response missing uploadUrl/key");
 
       await s3PutUpload({ uploadUrl: uploadData.uploadUrl, file, contentType: file.type });
 
@@ -459,6 +453,7 @@ export default function OwnerMusicPage() {
       setFormCoverImageUrl(uploadData.publicUrl || URL.createObjectURL(file));
       alert("Artwork uploaded.");
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") return goOwnerLogin(profileKey);
       console.error("track artwork upload error:", e);
       alert(e?.message || "Could not upload artwork.");
     } finally {
@@ -472,21 +467,18 @@ export default function OwnerMusicPage() {
 
     setUploadingFull(true);
     try {
-      const uploadRes = await ownerFetch("/api/owner/music/upload-url", {
+      const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name || "track.m4a", contentType: file.type || "audio/m4a" }),
+        body: JSON.stringify({
+          filename: file.name || "track.m4a",
+          contentType: file.type || "audio/m4a",
+        }),
       });
-      const uploadData = await safeJson(uploadRes);
 
-      if (!uploadRes.ok) {
-        const msg = uploadData?.error || "Failed to get upload URL.";
-        if (isUnauthorizedMessage(msg)) return goOwnerLogin(profileKey);
-        throw new Error(msg);
+      if (!uploadData?.uploadUrl || !uploadData?.key) {
+        throw new Error("Upload URL response missing uploadUrl/key");
       }
-
-      if (!uploadData?.uploadUrl || !uploadData?.key) throw new Error("Upload URL response missing uploadUrl/key");
 
       await s3PutUpload({ uploadUrl: uploadData.uploadUrl, file, contentType: file.type });
 
@@ -494,6 +486,7 @@ export default function OwnerMusicPage() {
       setFormS3KeyPreview((prev) => prev || uploadData.key);
       alert("Upload complete. Full key set (and preview key set if empty).");
     } catch (e) {
+      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") return goOwnerLogin(profileKey);
       console.error("full upload error:", e);
       alert(e?.message || "Could not upload audio.");
     } finally {
@@ -504,16 +497,16 @@ export default function OwnerMusicPage() {
   // ---------------- UI ----------------
   return (
     <div className="opage">
+      <style>{styles(accent)}</style>
+
       <div className="oheader">
         <button className="oiconBtn" onClick={() => nav(-1)} title="Back">
-          ✕
+          ←
         </button>
 
         <div className="oheaderCenter">
-          <div className="otitle">{OWNER_LABEL} Music</div>
-          <div className="osubtitle">
-            Manage your catalog & pricing{profileKey ? ` • ${profileKey}` : ""}
-          </div>
+          <div className="otitle">{ownerLabel} • Music</div>
+          <div className="osubtitle">Manage your catalog & pricing{profileKey ? ` • ${profileKey}` : ""}</div>
         </div>
 
         <div className="ochip">
@@ -524,7 +517,7 @@ export default function OwnerMusicPage() {
 
       {!profileKey ? (
         <div className="obox warn">
-          Missing profileKey for this page. Use /owner/:profileKey/music or set localStorage.activeProfileKey
+          Missing profileKey. Open <b>/world/:profileKey/owner/music</b> or set localStorage("profileKey").
         </div>
       ) : loading ? (
         <div className="oload">
@@ -548,6 +541,9 @@ export default function OwnerMusicPage() {
               </button>
               <button className="oactBtn" onClick={openNewTrack} title="New track">
                 ＋ Track
+              </button>
+              <button className="oactBtn ghost" onClick={loadCatalog} title="Refresh">
+                ⟳
               </button>
             </div>
           </div>
@@ -593,7 +589,7 @@ export default function OwnerMusicPage() {
                     <button key={t._id} className="orow" onClick={() => openEditTrack(t)}>
                       <div className="orowLeft">
                         <div className="obubble">
-                          {artworkUrl ? <img src={artworkUrl} alt="" /> : <span>♪</span>}
+                          {artworkUrl ? <img src={artworkUrl} alt="" /> : <span className="obubbleIcon">♪</span>}
                         </div>
                         <div className="oflex1">
                           <div className="orowTitle">{t.title}</div>
@@ -672,11 +668,12 @@ export default function OwnerMusicPage() {
 
           <label className="olabel">Album (optional)</label>
           <div className="ochips">
-            <button className={`ochipBtn ${!formAlbumId ? "active" : ""}`} onClick={() => setFormAlbumId("")}>
+            <button type="button" className={`ochipBtn ${!formAlbumId ? "active" : ""}`} onClick={() => setFormAlbumId("")}>
               Single
             </button>
             {sortedAlbums.map((a) => (
               <button
+                type="button"
                 key={a._id}
                 className={`ochipBtn ${formAlbumId === a._id ? "active" : ""}`}
                 onClick={() => setFormAlbumId(a._id)}
@@ -785,59 +782,56 @@ export default function OwnerMusicPage() {
           </div>
         </div>
       </ModalShell>
-
-      {/* Styles */}
-      <style>{styles}</style>
     </div>
   );
 }
 
-const styles = `
+const styles = (accent = "#22d3ee") => `
 .opage{
   min-height:100vh;
   padding:18px;
-  background: radial-gradient(1200px 600px at 20% 0%, rgba(34,211,238,.12), transparent 60%),
-              radial-gradient(900px 500px at 80% 10%, rgba(99,102,241,.10), transparent 55%),
-              linear-gradient(180deg, #050509, #0b0b14 65%, #151521);
+  background:
+    radial-gradient(1200px 600px at 20% 0%, rgba(34,211,238,.12), transparent 60%),
+    radial-gradient(900px 500px at 80% 10%, rgba(99,102,241,.10), transparent 55%),
+    linear-gradient(180deg, #050509, #0b0b14 65%, #151521);
   color:#e5e7eb;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
 }
-.oheader{
-  display:flex; align-items:center; gap:12px;
-  margin-bottom:14px;
-}
+
+.oheader{ display:flex; align-items:center; gap:12px; margin-bottom:14px; }
 .oiconBtn{
-  width:34px; height:34px; border-radius:999px;
-  border:1px solid rgba(255,255,255,.18);
-  background: rgba(2,6,23,.25);
-  color:#fff; cursor:pointer;
+  width:40px; height:40px; border-radius:14px;
+  border:1px solid rgba(148,163,184,.28);
+  background: rgba(15,23,42,.55);
+  color:#fff; cursor:pointer; font-weight:900; font-size:16px;
 }
-.oheaderCenter{ flex:1; }
-.otitle{ font-size:18px; font-weight:800; letter-spacing:.3px; }
-.osubtitle{ font-size:12px; color:#9ca3af; margin-top:3px; }
+.oheaderCenter{ flex:1; min-width:0; }
+.otitle{ font-size:18px; font-weight:900; letter-spacing:.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.osubtitle{ font-size:12px; color:#9ca3af; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 .ochip{
   display:flex; align-items:center; gap:8px;
-  padding:8px 12px;
+  padding:10px 14px;
   border-radius:999px;
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(2,6,23,.25);
+  border:1px solid rgba(148,163,184,.22);
+  background: rgba(15,23,42,.45);
   font-size:12px;
 }
-.ochipDot{ width:8px; height:8px; border-radius:999px; background:#22d3ee; box-shadow:0 0 18px rgba(34,211,238,.55); }
+.ochipDot{ width:8px; height:8px; border-radius:999px; background:${accent}; box-shadow:0 0 18px rgba(34,211,238,.55); }
 
 .obox{
-  border:1px solid rgba(255,255,255,.12);
-  background: rgba(2,6,23,.30);
-  border-radius:14px;
+  border:1px solid rgba(148,163,184,.22);
+  background: rgba(15,23,42,.45);
+  border-radius:16px;
   padding:12px;
 }
-.obox.warn{ border-color: rgba(248,113,113,.6); color:#fecaca; }
+.obox.warn{ border-color: rgba(248,113,113,.55); color:#fecaca; }
 
 .oload{ margin-top:40px; display:flex; flex-direction:column; align-items:center; gap:10px; }
 .ospin{
   width:26px; height:26px; border-radius:999px;
   border:2px solid rgba(255,255,255,.18);
-  border-top-color:#22d3ee;
+  border-top-color:${accent};
   animation: spin 1s linear infinite;
 }
 @keyframes spin{ to { transform: rotate(360deg); } }
@@ -845,25 +839,31 @@ const styles = `
 
 .ostats{
   display:flex; align-items:center; gap:12px;
-  border:1px solid rgba(255,255,255,.10);
-  background: rgba(2,6,23,.28);
+  border:1px solid rgba(148,163,184,.20);
+  background: rgba(15,23,42,.45);
   border-radius:18px;
   padding:12px;
   margin: 14px 0 16px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.35);
   backdrop-filter: blur(10px);
 }
 .ostat{ min-width:110px; }
 .ostatNum{ font-size:18px; font-weight:900; color:#fff; }
 .ostatLabel{ font-size:11px; color:#9ca3af; margin-top:2px; }
-.oactions{ margin-left:auto; display:flex; gap:10px; }
+.oactions{ margin-left:auto; display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
 .oactBtn{
   border-radius:999px;
-  border:1px solid rgba(34,211,238,.55);
+  border:1px solid rgba(34,211,238,.45);
   background: rgba(34,211,238,.10);
   color:#e0f2fe;
-  padding:8px 12px;
-  font-weight:800;
+  padding:10px 14px;
+  font-weight:900;
   cursor:pointer;
+}
+.oactBtn.ghost{
+  border-color: rgba(148,163,184,.26);
+  background: rgba(15,23,42,.25);
+  color:#e5e7eb;
 }
 
 .osection{ margin-top:14px; }
@@ -873,47 +873,51 @@ const styles = `
 .ogrid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:10px; }
 .ocard{
   border-radius:18px;
-  border:1px solid rgba(255,255,255,.08);
-  background: rgba(2,6,23,.28);
+  border:1px solid rgba(148,163,184,.18);
+  background: rgba(15,23,42,.40);
   padding:10px;
   color:inherit;
   text-align:left;
   cursor:pointer;
+  box-shadow: 0 18px 44px rgba(0,0,0,.30);
 }
 .ocardRow{ display:flex; align-items:center; gap:10px; }
-.ocover{ width:54px; height:54px; border-radius:14px; overflow:hidden; border:1px solid rgba(34,211,238,.25); background: rgba(15,23,42,.6); display:flex; align-items:center; justify-content:center; }
+.ocover{ width:54px; height:54px; border-radius:14px; overflow:hidden; border:1px solid rgba(34,211,238,.25); background: rgba(2,6,23,.35); display:flex; align-items:center; justify-content:center; }
 .ocover img{ width:100%; height:100%; object-fit:cover; }
-.ocoverPh{ color:#22d3ee; font-weight:900; }
-.oflex1{ flex:1; }
-.ocardTitle{ font-weight:800; color:#fff; }
+.ocoverPh{ color:${accent}; font-weight:900; font-size:18px; }
+.oflex1{ flex:1; min-width:0; }
+.ocardTitle{ font-weight:900; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ocardMeta{ font-size:11px; color:#9ca3af; margin-top:2px; }
 .oright{ text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
-.oprice{ font-weight:800; color:#fff; }
+.oprice{ font-weight:900; color:#fff; }
 .oedit{ font-size:11px; color:#9ca3af; }
 
 .olist{ display:flex; flex-direction:column; gap:10px; }
 .orow{
   display:flex; align-items:center; justify-content:space-between;
   border-radius:18px;
-  border:1px solid rgba(255,255,255,.06);
-  background: rgba(2,6,23,.25);
+  border:1px solid rgba(148,163,184,.16);
+  background: rgba(15,23,42,.38);
   padding:10px;
   color:inherit;
   text-align:left;
   cursor:pointer;
+  box-shadow: 0 18px 44px rgba(0,0,0,.28);
 }
-.orowLeft{ display:flex; align-items:center; gap:10px; flex:1; }
+.orowLeft{ display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
 .obubble{
-  width:42px; height:42px; border-radius:999px;
+  width:48px; height:48px; border-radius:999px;
   overflow:hidden;
-  border:1px solid rgba(34,211,238,.55);
-  background: rgba(15,23,42,.6);
+  border:1px solid rgba(34,211,238,.45);
+  background: rgba(2,6,23,.35);
   display:flex; align-items:center; justify-content:center;
+  flex: 0 0 auto;
 }
 .obubble img{ width:100%; height:100%; object-fit:cover; }
-.orowTitle{ font-weight:800; color:#fff; }
-.orowMeta{ font-size:11px; color:#9ca3af; margin-top:2px; }
-.orowS3{ font-size:10px; color:#4ade80; margin-top:2px; }
+.obubbleIcon{ font-size:20px; color:${accent}; font-weight:900; }
+.orowTitle{ font-weight:900; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.orowMeta{ font-size:11px; color:#9ca3af; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.orowS3{ font-size:10px; color:#4ade80; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .orowRight{ display:flex; flex-direction:column; align-items:flex-end; gap:6px; margin-left:12px; }
 
 .omodalBack{
@@ -928,26 +932,23 @@ const styles = `
   max-height: 90vh;
   overflow:auto;
   border-radius:22px;
-  border:1px solid rgba(148,163,184,.6);
-  background: rgba(2,6,23,.55);
+  border:1px solid rgba(148,163,184,.35);
+  background: rgba(15,23,42,.55);
   backdrop-filter: blur(12px);
   box-shadow: 0 24px 80px rgba(0,0,0,.55);
 }
-.omodalHeader{
-  display:flex; align-items:center; justify-content:space-between;
-  padding:14px 14px 8px;
-}
+.omodalHeader{ display:flex; align-items:center; justify-content:space-between; padding:14px 14px 8px; }
 .omodalTitle{ font-weight:900; letter-spacing:.3px; }
 .omodalBody{ padding: 10px 14px 12px; }
-.omodalFooter{ padding: 10px 14px 14px; border-top: 1px solid rgba(255,255,255,.06); }
+.omodalFooter{ padding: 10px 14px 14px; border-top: 1px solid rgba(148,163,184,.18); }
 .omodalFootRow{ display:flex; align-items:center; gap:10px; }
 
 .oform{ display:flex; flex-direction:column; gap:8px; }
-.olabel{ font-size:12px; color:#9ca3af; }
+.olabel{ font-size:12px; color:#9ca3af; font-weight:900; letter-spacing:.2px; }
 .oinput{
   border-radius:12px;
-  border:1px solid rgba(148,163,184,.6);
-  background: rgba(15,23,42,.45);
+  border:1px solid rgba(148,163,184,.28);
+  background: rgba(2,6,23,.28);
   color:#f9fafb;
   padding:10px 10px;
   outline:none;
@@ -957,37 +958,38 @@ const styles = `
 .ochips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
 .ochipBtn{
   border-radius:999px;
-  border:1px solid rgba(148,163,184,.6);
+  border:1px solid rgba(148,163,184,.25);
   background: transparent;
   color:#cbd5e1;
-  padding:6px 10px;
+  padding:8px 12px;
   cursor:pointer;
   font-size:12px;
+  font-weight:900;
 }
 .ochipBtn.active{
-  border-color: rgba(34,211,238,.75);
+  border-color: rgba(34,211,238,.65);
   background: rgba(34,211,238,.10);
   color:#e0f2fe;
-  font-weight:800;
 }
 
 .ouploadRow{ display:flex; align-items:center; gap:10px; }
 .oprev{
-  width:64px; height:64px; border-radius:14px;
-  border:1px solid rgba(148,163,184,.6);
-  background: rgba(15,23,42,.55);
+  width:72px; height:72px; border-radius:16px;
+  border:1px solid rgba(148,163,184,.28);
+  background: rgba(2,6,23,.28);
   overflow:hidden;
   display:flex; align-items:center; justify-content:center;
+  flex: 0 0 auto;
 }
 .oprev img{ width:100%; height:100%; object-fit:cover; }
-.oprevPh{ font-size:12px; color:#9ca3af; font-weight:800; }
+.oprevPh{ font-size:12px; color:#9ca3af; font-weight:900; }
 
 .ouploadBtn{
   border-radius:999px;
   border:1px solid rgba(34,211,238,.55);
   background: rgba(34,211,238,.10);
   color:#e0f2fe;
-  padding:8px 12px;
+  padding:10px 14px;
   cursor:pointer;
   font-weight:900;
   font-size:12px;
@@ -997,28 +999,37 @@ const styles = `
 
 .osecond{
   border-radius:999px;
-  border:1px solid rgba(148,163,184,.6);
+  border:1px solid rgba(148,163,184,.28);
   background: transparent;
   color:#e5e7eb;
-  padding:8px 12px;
+  padding:10px 14px;
   cursor:pointer;
+  font-weight:900;
 }
 .oprimary{
   border-radius:999px;
   border:1px solid rgba(34,211,238,.75);
-  background: rgba(34,211,238,.85);
+  background: rgba(34,211,238,.90);
   color:#0f172a;
-  padding:8px 14px;
+  padding:10px 16px;
   cursor:pointer;
   font-weight:900;
 }
 .odanger{
   border-radius:999px;
-  border:1px solid rgba(248,113,113,.75);
+  border:1px solid rgba(248,113,113,.65);
   background: rgba(248,113,113,.12);
   color:#fecaca;
-  padding:8px 12px;
+  padding:10px 14px;
   cursor:pointer;
   font-weight:900;
 }
-`;
+
+@media (max-width: 720px){
+  .orowMeta{ white-space:normal; }
+  .orowS3{ white-space:normal; }
+  .orowRight{ display:none; }
+  .orow{ align-items:flex-start; }
+  .orowLeft{ align-items:flex-start; }
+}
+`; 
