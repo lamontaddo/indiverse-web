@@ -48,22 +48,34 @@ function normalizeOwnerItems(profile) {
 }
 
 // --- Ionicon → Emoji (intentional web stand-in) ---
+// --- Ionicon → Emoji (intentional web stand-in) ---
 function ionToEmoji(name = "") {
   const k = String(name).toLowerCase();
+
+  // about / people
   if (k.includes("person")) return "👤";
-  if (k.includes("people")) return "👥";
-  if (k.includes("chat")) return "💬";
+  if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
+
+  // ✅ contacts (more explicit)
+  if (k.includes("call") || k.includes("phone")) return "📞";
+  if (k.includes("mail") || k.includes("email")) return "✉️";
+
+  // ✅ messages (more explicit)
+  if (k.includes("chat") || k.includes("message") || k.includes("messages")) return "💬";
+
+  // lists / music / media
   if (k.includes("list")) return "📃";
   if (k.includes("music") || k.includes("musical")) return "🎵";
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
 
-  // ✅ products
+  // products
   if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
 
   if (k.includes("home")) return "🏠";
   return "◉";
 }
+
 
 export default function OwnerHomePage() {
   const navigate = useNavigate();
