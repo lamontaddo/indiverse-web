@@ -1,11 +1,10 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE
+// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE + PRODUCTS FIX
 // Route: /world/:profileKey/owner/home
 //
-// ✅ Keeps large icon look
-// ✅ Adds "Back to IndiVerse" button (to /world/:profileKey)
-// ✅ Enhanced overall look: ambient glows, header pill, better tile depth/hover, subtle grid
-// ✅ Hardened profileKey resolve: route -> state -> localStorage only (no lamont fallback)
-// ✅ Emoji icons intentionally large (RN parity)
+// ✅ FIX: Products tile now routes to /world/:profileKey/owner/products
+// ✅ Adds routeMap.ownerproducts + builtOwnerRoutes includes "products"
+// ✅ Adds fallback Products tile (cart icon)
+// ✅ Keeps large icon look + Back to IndiVerse button + enhanced UI
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -20,6 +19,10 @@ const FALLBACK_OWNER_ITEMS = [
   { key: "messages", label: "Messages", ionicon: "chatbubbles", to: "ownermessages", size: 150 },
   { key: "playlist", label: "Playlist", ionicon: "list", to: "ownerplaylist", size: 165 },
   { key: "music", label: "Music", ionicon: "musical-notes", to: "ownermusic", size: 160 },
+
+  // ✅ NEW: products (important)
+  { key: "products", label: "Products", ionicon: "cart", to: "ownerproducts", size: 160 },
+
   { key: "fashion", label: "Fashion", ionicon: "shirt", to: "ownerfashion", size: 155 },
   { key: "videos", label: "Videos", ionicon: "videocam", to: "ownervideos", size: 155 },
 ];
@@ -54,6 +57,10 @@ function ionToEmoji(name = "") {
   if (k.includes("music") || k.includes("musical")) return "🎵";
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
+
+  // ✅ products
+  if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
+
   if (k.includes("home")) return "🏠";
   return "◉";
 }
@@ -105,6 +112,7 @@ export default function OwnerHomePage() {
     return `translate3d(${Math.sin(t * p.sx) * p.ax}px, ${Math.cos(t * p.sy) * p.ay}px, 0)`;
   };
 
+  // ✅ MUST include ownerproducts
   const routeMap = {
     ownerabout: "about",
     ownercontacts: "contacts",
@@ -113,9 +121,23 @@ export default function OwnerHomePage() {
     ownermusic: "music",
     ownerfashion: "fashion",
     ownervideos: "videos",
+
+    // ✅ FIX
+    ownerproducts: "products",
   };
 
-  const builtOwnerRoutes = new Set(["home", "about", "contacts", "messages", "playlist", "music", "fashion", "videos"]);
+  // ✅ MUST include products
+  const builtOwnerRoutes = new Set([
+    "home",
+    "about",
+    "contacts",
+    "messages",
+    "playlist",
+    "music",
+    "products", // ✅ FIX
+    "fashion",
+    "videos",
+  ]);
 
   const handleTilePress = (tile) => {
     if (!profileKey) return;
@@ -123,10 +145,15 @@ export default function OwnerHomePage() {
     const raw = String(tile.to).toLowerCase();
     const tool = routeMap[raw] || raw.replace(/^owner/, "");
 
+    // 🔎 helpful to see what it's trying to do
+    console.log("[OwnerHomePage] tile", raw, "-> tool:", tool);
+
     if (builtOwnerRoutes.has(tool)) {
       navigate(`/world/${encodeURIComponent(profileKey)}/owner/${tool}`, {
         state: { profileKey, bgUrl },
       });
+    } else {
+      console.warn("[OwnerHomePage] unknown owner route:", tool, "from:", raw);
     }
   };
 
@@ -139,7 +166,6 @@ export default function OwnerHomePage() {
     <div style={styles.page}>
       <style>{css(accent)}</style>
 
-      {/* Ambient glows */}
       <div style={{ ...styles.glowOne, background: hexToRgba(accent, 0.33) }} />
       <div style={styles.glowTwo} />
       <div style={styles.grid} />
@@ -170,11 +196,7 @@ export default function OwnerHomePage() {
           <button
             key={t.key}
             className="oh-tile"
-            style={{
-              width: t.size,
-              height: t.size,
-              transform: tileTransform(idx),
-            }}
+            style={{ width: t.size, height: t.size, transform: tileTransform(idx) }}
             onClick={() => handleTilePress(t)}
             disabled={!profileKey}
             aria-label={t.label}
@@ -214,7 +236,6 @@ const styles = {
     overflow: "hidden",
     position: "relative",
   },
-
   glowOne: {
     position: "fixed",
     width: 360,
@@ -252,7 +273,6 @@ const styles = {
     zIndex: 0,
     opacity: 0.8,
   },
-
   headerWrap: {
     position: "relative",
     zIndex: 2,
@@ -264,7 +284,6 @@ const styles = {
   },
   headerLeft: {},
   headerRight: { display: "flex", alignItems: "center", gap: 10 },
-
   title: {
     fontSize: 32,
     fontWeight: 900,
@@ -278,7 +297,6 @@ const styles = {
     color: "#9ca3af",
     textTransform: "uppercase",
   },
-
   missingBox: {
     position: "relative",
     zIndex: 2,
@@ -290,7 +308,6 @@ const styles = {
   },
   missingTitle: { color: "#fecaca", fontWeight: 900, fontSize: 13 },
   missingText: { marginTop: 6, color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 700 },
-
   field: {
     position: "relative",
     zIndex: 2,
@@ -300,7 +317,6 @@ const styles = {
     justifyContent: "space-between",
     gap: 18,
   },
-
   footerNote: {
     position: "fixed",
     left: 18,
@@ -405,7 +421,6 @@ function css(accent) {
     z-index: 1;
   }
 
-  /* icon size unchanged */
   .oh-icon{
     font-size: 48px;
     line-height: 1;
