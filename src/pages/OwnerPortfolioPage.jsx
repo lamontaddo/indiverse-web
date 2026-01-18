@@ -1,24 +1,19 @@
-// src/pages/OwnerPortfolioPage.jsx ✅ FULL DROP-IN (Web) — HARDENED
+// src/pages/OwnerPortfolioPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + BASE URL AWARE
 // Route: /world/:profileKey/owner/portfolio
 //
-// Per-profile safe:
-// ✅ REQUIRES profileKey (no silent fallback)
-// ✅ Every ownerFetch call includes { profileKey } so JWT + tenant headers are correct
+// ✅ Requires profileKey (no silent fallback)
+// ✅ All owner calls include x-profile-key + Authorization (token per profileKey)
+// ✅ Uses profile.base (or VITE_API_BASE_URL) so this works hosted anywhere
 // ✅ 401/403 -> redirect to OwnerLogin
 //
-// Upload flow (web):
+// Upload flow:
 // 0) GET  /api/owner/profile (auth ping)
 // 1) POST /api/owner/portfolio/upload-url  -> { uploadUrl, key }
 // 2) PUT  file bytes to S3 uploadUrl
 // 3) POST /api/owner/portfolio             -> save DB record
 // 4) GET  /api/owner/portfolio             -> refresh list
 //
-// Notes:
-// - Uses localStorage ownerToken:<profileKey> (same as your OwnerHomePage hardened scheme)
-// - Uses fetch PUT with file Blob
-// - Uses simple “cards” list + delete
-//
-// Requires: react-router-dom, bootRemoteConfigOnce already run in BootGate
+// Requires: react-router-dom, BootGate ran bootRemoteConfigOnce
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -50,20 +45,36 @@ async function readJsonSafe(res) {
   }
 }
 
+function joinUrl(base, path) {
+  const b = String(base || '').replace(/\/+$/, '');
+  const p = String(path || '').startsWith('/') ? String(path || '') : `/${path || ''}`;
+  if (!b) return p; // same-origin
+  return `${b}${p}`;
+}
+
 // ✅ web version of ownerFetchRaw (no throw, returns Response)
-async function ownerFetchRawWeb(path, { profileKey, method = 'GET', headers = {}, body } = {}) {
+async function ownerFetchRawWeb(path, { baseUrl = '', profileKey, method = 'GET', headers = {}, body } = {}) {
   const pk = normalizeProfileKey(profileKey);
   const token = getOwnerToken(pk);
 
-  return fetch(path, {
+  const finalHeaders = {
+    'x-profile-key': pk,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...headers,
+  };
+
+  const hasBody = body !== undefined && body !== null;
+
+  // only set JSON content-type automatically if caller didn't provide one
+  if (hasBody && !finalHeaders['content-type'] && !finalHeaders['Content-Type']) {
+    // if body is a string we assume JSON string; if it's FormData/Blob caller should set/omit explicitly
+    if (typeof body === 'string') finalHeaders['content-type'] = 'application/json';
+  }
+
+  return fetch(joinUrl(baseUrl, path), {
     method,
-    headers: {
-      ...(body ? { 'content-type': 'application/json' } : {}),
-      'x-profile-key': pk,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body,
+    headers: finalHeaders,
+    body: hasBody ? body : undefined,
   });
 }
 
@@ -80,6 +91,13 @@ export default function OwnerPortfolioPage() {
 
   const profile = useMemo(() => (profileKey ? getProfileByKey(profileKey) : null), [profileKey]);
   const accent = profile?.accent || '#818cf8';
+  const profileLabel = profile?.label || profile?.name || profileKey || 'Unknown';
+
+  // Base URL: profile.base OR env OR same-origin
+  const baseUrl =
+    profile?.base ||
+    import.meta.env.VITE_API_BASE_URL ||
+    '';
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -109,7 +127,7 @@ export default function OwnerPortfolioPage() {
 
     setLoading(true);
     try {
-      const res = await ownerFetchRawWeb('/api/owner/portfolio', { profileKey });
+      const res = await ownerFetchRawWeb('/api/owner/portfolio', { baseUrl, profileKey });
       const data = await readJsonSafe(res);
 
       if (res.status === 401 || res.status === 403) {
@@ -130,7 +148,7 @@ export default function OwnerPortfolioPage() {
     } finally {
       setLoading(false);
     }
-  }, [profileKey, goOwnerLogin]);
+  }, [profileKey, baseUrl, goOwnerLogin]);
 
   useEffect(() => {
     load();
@@ -155,7 +173,6 @@ export default function OwnerPortfolioPage() {
       if (!profileKey || !file) return;
       if (uploading) return;
 
-      // basic type gate
       const contentType = String(file.type || '').toLowerCase();
       const isImage =
         contentType.startsWith('image/') ||
@@ -171,7 +188,7 @@ export default function OwnerPortfolioPage() {
 
       try {
         // STEP 0: confirm owner auth works
-        const ping = await ownerFetchRawWeb('/api/owner/profile', { profileKey });
+        const ping = await ownerFetchRawWeb('/api/owner/profile', { baseUrl, profileKey });
         if (ping.status === 401 || ping.status === 403) {
           setStatus({ level: 'warn', text: 'Session expired. Please log in again.' });
           goOwnerLogin();
@@ -185,6 +202,7 @@ export default function OwnerPortfolioPage() {
         // STEP 1: presigned URL
         const filename = String(file.name || `upload-${Date.now()}.jpg`);
         const r1 = await ownerFetchRawWeb('/api/owner/portfolio/upload-url', {
+          baseUrl,
           profileKey,
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -202,11 +220,10 @@ export default function OwnerPortfolioPage() {
         if (!r1.ok) throw new Error(j1?.error || `upload-url HTTP ${r1.status}`);
         if (!j1?.uploadUrl || !j1?.key) throw new Error('upload-url missing uploadUrl/key');
 
-        // STEP 2: PUT to S3 (fetch with Blob)
+        // STEP 2: PUT to S3
         const put = await fetch(j1.uploadUrl, {
           method: 'PUT',
           headers: {
-            // S3 presign usually expects matching Content-Type (safe to include)
             ...(contentType ? { 'Content-Type': contentType } : {}),
           },
           body: file,
@@ -219,6 +236,7 @@ export default function OwnerPortfolioPage() {
 
         // STEP 3: save DB record
         const r3 = await ownerFetchRawWeb('/api/owner/portfolio', {
+          baseUrl,
           profileKey,
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -243,11 +261,10 @@ export default function OwnerPortfolioPage() {
         setStatus({ level: 'err', text: e?.message || 'Upload failed.' });
       } finally {
         setUploading(false);
-        // allow selecting same file again
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [profileKey, uploading, goOwnerLogin, load]
+    [profileKey, uploading, baseUrl, goOwnerLogin, load]
   );
 
   const onDelete = useCallback(
@@ -258,6 +275,7 @@ export default function OwnerPortfolioPage() {
 
       try {
         const res = await ownerFetchRawWeb(`/api/owner/portfolio/${encodeURIComponent(id)}`, {
+          baseUrl,
           profileKey,
           method: 'DELETE',
         });
@@ -276,7 +294,7 @@ export default function OwnerPortfolioPage() {
         setStatus({ level: 'err', text: e?.message || 'Failed to delete.' });
       }
     },
-    [profileKey, goOwnerLogin, load]
+    [profileKey, baseUrl, goOwnerLogin, load]
   );
 
   const statusColor =
@@ -297,7 +315,7 @@ export default function OwnerPortfolioPage() {
 
           <div style={{ flex: 1 }}>
             <div style={styles.title}>OWNER PORTFOLIO</div>
-            <div style={styles.subTitle}>upload images to Kerry portfolio</div>
+            <div style={styles.subTitle}>upload images for {profileLabel}</div>
             {!profileKey ? (
               <div style={{ marginTop: 8, color: '#fca5a5', fontSize: 12, fontWeight: 800 }}>
                 Missing profileKey (open with /world/:profileKey/owner/portfolio).
@@ -447,7 +465,14 @@ const styles = {
   },
   statusDot: { width: 8, height: 8, borderRadius: 999 },
   statusText: { color: '#9ca3af', fontSize: 12, letterSpacing: 0.7, whiteSpace: 'nowrap' },
-  center: { minHeight: 360, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 },
+  center: {
+    minHeight: 360,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
   list: { marginTop: 14, display: 'grid', gridTemplateColumns: '1fr', gap: 12 },
   cardRow: { display: 'flex', alignItems: 'center', gap: 12 },
   thumb: {
@@ -459,7 +484,14 @@ const styles = {
     display: 'grid',
     placeItems: 'center',
   },
-  itemTitle: { color: '#fff', fontWeight: 900, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  itemTitle: {
+    color: '#fff',
+    fontWeight: 900,
+    fontSize: 12,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
   itemSub: { color: 'rgba(255,255,255,0.65)', marginTop: 4, fontSize: 11 },
 };
 
