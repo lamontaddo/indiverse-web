@@ -21,7 +21,25 @@ const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "https://indiverse-backend.onrender.com";
 
 /* -------------------- helpers -------------------- */
-
+// --- color helper (WEB) ---
+function hexToRgba(hex, a = 1) {
+    const h = String(hex || "").replace("#", "").trim();
+    const full =
+      h.length === 3
+        ? h.split("").map((c) => c + c).join("")
+        : h;
+  
+    if (full.length !== 6) {
+      return `rgba(129,140,248,${a})`; // safe fallback
+    }
+  
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+  
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  
 function normalizeProfileKey(pk) {
   return String(pk || "").trim().toLowerCase();
 }
