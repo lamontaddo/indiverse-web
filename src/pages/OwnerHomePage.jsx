@@ -52,27 +52,21 @@ function normalizeOwnerItems(profile) {
 function ionToEmoji(name = "") {
   const k = String(name).toLowerCase();
 
-  // ✅ contacts FIRST so it doesn't get caught by "people"
-  if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "📞";
-
-  // ✅ messages
   if (k.includes("chat") || k.includes("message") || k.includes("messages")) return "💬";
-
-  // about
+  if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
   if (k.includes("person")) return "👤";
 
-  // lists / music / media
   if (k.includes("list")) return "📃";
   if (k.includes("music") || k.includes("musical")) return "🎵";
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
 
-  // products
   if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
 
   if (k.includes("home")) return "🏠";
   return "◉";
 }
+
 
 
 
