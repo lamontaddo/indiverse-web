@@ -220,7 +220,8 @@ const builtOwnerRoutes = new Set([
             title={t.label}
           >
             <div className="oh-tileInner">
-              <div className="oh-icon">{ionToEmoji(t.ionicon)}</div>
+            <div className="oh-icon">{ionToEmoji(t.ionicon, t)}</div>
+
               <div className="oh-label">{t.label}</div>
             </div>
           </button>
