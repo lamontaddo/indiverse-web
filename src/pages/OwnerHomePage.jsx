@@ -111,33 +111,34 @@ export default function OwnerHomePage() {
     const p = phases[idx];
     return `translate3d(${Math.sin(t * p.sx) * p.ax}px, ${Math.cos(t * p.sy) * p.ay}px, 0)`;
   };
+// ✅ MUST include ownerproducts + ownerorders
+const routeMap = {
+  ownerabout: "about",
+  ownercontacts: "contacts",
+  ownermessages: "messages",
+  ownerplaylist: "playlist",
+  ownermusic: "music",
+  ownerfashion: "fashion",
+  ownervideos: "videos",
 
-  // ✅ MUST include ownerproducts
-  const routeMap = {
-    ownerabout: "about",
-    ownercontacts: "contacts",
-    ownermessages: "messages",
-    ownerplaylist: "playlist",
-    ownermusic: "music",
-    ownerfashion: "fashion",
-    ownervideos: "videos",
+  ownerproducts: "products",
+  ownerorders: "orders",
+};
 
-    // ✅ FIX
-    ownerproducts: "products",
-  };
+// ✅ MUST include products + orders
+const builtOwnerRoutes = new Set([
+  "home",
+  "about",
+  "contacts",
+  "messages",
+  "playlist",
+  "music",
+  "products",
+  "orders",
+  "fashion",
+  "videos",
+]);
 
-  // ✅ MUST include products
-  const builtOwnerRoutes = new Set([
-    "home",
-    "about",
-    "contacts",
-    "messages",
-    "playlist",
-    "music",
-    "products", // ✅ FIX
-    "fashion",
-    "videos",
-  ]);
 
   const handleTilePress = (tile) => {
     if (!profileKey) return;
