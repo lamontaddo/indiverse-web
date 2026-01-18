@@ -52,16 +52,14 @@ function normalizeOwnerItems(profile) {
 function ionToEmoji(name = "") {
   const k = String(name).toLowerCase();
 
-  // about / people
-  if (k.includes("person")) return "👤";
-  if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
+  // ✅ contacts FIRST so it doesn't get caught by "people"
+  if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "📞";
 
-  // ✅ contacts (more explicit)
-  if (k.includes("call") || k.includes("phone")) return "📞";
-  if (k.includes("mail") || k.includes("email")) return "✉️";
-
-  // ✅ messages (more explicit)
+  // ✅ messages
   if (k.includes("chat") || k.includes("message") || k.includes("messages")) return "💬";
+
+  // about
+  if (k.includes("person")) return "👤";
 
   // lists / music / media
   if (k.includes("list")) return "📃";
@@ -75,6 +73,7 @@ function ionToEmoji(name = "") {
   if (k.includes("home")) return "🏠";
   return "◉";
 }
+
 
 
 export default function OwnerHomePage() {
