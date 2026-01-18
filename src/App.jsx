@@ -54,6 +54,7 @@ import OwnerPortfolioPage from "./pages/OwnerPortfolioPage.jsx";
 import PortfolioPage from "./pages/PortfolioPage.jsx";
 import PortfolioViewerPage from "./pages/PortfolioViewerPage.jsx";
 import OwnerOrdersPage from "./pages/OwnerOrdersPage.jsx";
+import OwnerPortfolioPage from "./pages/OwnerPortfolioPage.jsx";
 // ✅ Temporary stubs
 function Stub({ name }) {
   return (
@@ -251,6 +252,8 @@ export default function App() {
   path="/world/:profileKey/owner/orders"
   element={<OwnerOrdersPage />}
 />
+
+<Route path="/world/:profileKey/owner/portfolio" element={<OwnerPortfolioPage />} />
 
           {/* keep placeholder last among /world routes */}
           <Route

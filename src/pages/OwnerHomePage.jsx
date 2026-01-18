@@ -1,9 +1,11 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE + PRODUCTS FIX
+// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE + PRODUCTS FIX + PORTFOLIO FIX
 // Route: /world/:profileKey/owner/home
 //
-// ✅ FIX: Products tile now routes to /world/:profileKey/owner/products
-// ✅ Adds routeMap.ownerproducts + builtOwnerRoutes includes "products"
-// ✅ Adds fallback Products tile (cart icon)
+// ✅ FIX: Products tile routes to /world/:profileKey/owner/products
+// ✅ FIX: Portfolio tile now routes to /world/:profileKey/owner/portfolio
+// ✅ Adds routeMap.ownerproducts + routeMap.ownerorders + routeMap.ownerportfolio
+// ✅ builtOwnerRoutes includes "products" + "orders" + "portfolio"
+// ✅ Adds fallback Products tile + Portfolio tile
 // ✅ Keeps large icon look + Back to IndiVerse button + enhanced UI
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -20,8 +22,11 @@ const FALLBACK_OWNER_ITEMS = [
   { key: "playlist", label: "Playlist", ionicon: "list", to: "ownerplaylist", size: 165 },
   { key: "music", label: "Music", ionicon: "musical-notes", to: "ownermusic", size: 160 },
 
-  // ✅ NEW: products (important)
+  // ✅ products (important)
   { key: "products", label: "Products", ionicon: "cart", to: "ownerproducts", size: 160 },
+
+  // ✅ NEW: portfolio
+  { key: "portfolio", label: "Portfolio", ionicon: "images", to: "ownerportfolio", size: 155 },
 
   { key: "fashion", label: "Fashion", ionicon: "shirt", to: "ownerfashion", size: 155 },
   { key: "videos", label: "Videos", ionicon: "videocam", to: "ownervideos", size: 155 },
@@ -48,7 +53,6 @@ function normalizeOwnerItems(profile) {
 }
 
 // --- Ionicon → Emoji (intentional web stand-in) ---
-// --- Ionicon → Emoji (intentional web stand-in) ---
 function ionToEmoji(name = "", tile = null) {
   const k = String(name).toLowerCase();
   const key = String(tile?.key || "").toLowerCase();
@@ -58,7 +62,6 @@ function ionToEmoji(name = "", tile = null) {
   // ✅ FORCE messages icon by tile identity (not ionicon)
   if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
 
-  // everything else unchanged
   if (k.includes("person")) return "👤";
   if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
 
@@ -72,14 +75,11 @@ function ionToEmoji(name = "", tile = null) {
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
 
+  if (k.includes("images") || k.includes("image") || k.includes("camera")) return "🖼️";
   if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
   if (k.includes("home")) return "🏠";
   return "◉";
 }
-
-
-
-
 
 export default function OwnerHomePage() {
   const navigate = useNavigate();
@@ -127,34 +127,38 @@ export default function OwnerHomePage() {
     const p = phases[idx];
     return `translate3d(${Math.sin(t * p.sx) * p.ax}px, ${Math.cos(t * p.sy) * p.ay}px, 0)`;
   };
-// ✅ MUST include ownerproducts + ownerorders
-const routeMap = {
-  ownerabout: "about",
-  ownercontacts: "contacts",
-  ownermessages: "messages",
-  ownerplaylist: "playlist",
-  ownermusic: "music",
-  ownerfashion: "fashion",
-  ownervideos: "videos",
 
-  ownerproducts: "products",
-  ownerorders: "orders",
-};
+  // ✅ MUST include ownerproducts + ownerorders + ownerportfolio
+  const routeMap = {
+    ownerabout: "about",
+    ownercontacts: "contacts",
+    ownermessages: "messages",
+    ownerplaylist: "playlist",
+    ownermusic: "music",
+    ownerfashion: "fashion",
+    ownervideos: "videos",
 
-// ✅ MUST include products + orders
-const builtOwnerRoutes = new Set([
-  "home",
-  "about",
-  "contacts",
-  "messages",
-  "playlist",
-  "music",
-  "products",
-  "orders",
-  "fashion",
-  "videos",
-]);
+    ownerproducts: "products",
+    ownerorders: "orders",
 
+    // ✅ NEW:
+    ownerportfolio: "portfolio",
+  };
+
+  // ✅ MUST include products + orders + portfolio
+  const builtOwnerRoutes = new Set([
+    "home",
+    "about",
+    "contacts",
+    "messages",
+    "playlist",
+    "music",
+    "products",
+    "orders",
+    "portfolio",
+    "fashion",
+    "videos",
+  ]);
 
   const handleTilePress = (tile) => {
     if (!profileKey) return;
@@ -220,8 +224,7 @@ const builtOwnerRoutes = new Set([
             title={t.label}
           >
             <div className="oh-tileInner">
-            <div className="oh-icon">{ionToEmoji(t.ionicon, t)}</div>
-
+              <div className="oh-icon">{ionToEmoji(t.ionicon, t)}</div>
               <div className="oh-label">{t.label}</div>
             </div>
           </button>
