@@ -1,14 +1,25 @@
-// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE
+// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — FIXED API BASE (NO /api 404)
 // Route: /world/:profileKey/owner/products
 //
+// ✅ FIX: Calls BACKEND base URL (VITE_API_BASE_URL) instead of indiverse-web domain
+// ✅ If VITE_API_BASE_URL is missing, defaults to https://indiverse-backend.onrender.com
 // ✅ Adds "Back to IndiVerse" button (to /world/:profileKey)
 // ✅ Enhanced look (accent glow, glass panels, better list rows, cleaner modal)
-// ✅ Keeps hardened auth + routing
 // ✅ Requires :profileKey in route (no silent fallback)
 // Owner token: localStorage ownerToken:<profileKey> (fallback ownerToken)
+//
+// IMPORTANT ENV (Render web service):
+//   VITE_API_BASE_URL=https://indiverse-backend.onrender.com
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+
+/* -------------------- config -------------------- */
+
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "https://indiverse-backend.onrender.com";
+
+/* -------------------- helpers -------------------- */
 
 function normalizeProfileKey(pk) {
   return String(pk || "").trim().toLowerCase();
@@ -38,15 +49,26 @@ async function readJsonSafe(res) {
   }
 }
 
+function joinUrl(base, path) {
+  const b = String(base || "").replace(/\/+$/, "");
+  const p = String(path || "");
+  if (!p) return b;
+  if (p.startsWith("http://") || p.startsWith("https://")) return p;
+  return p.startsWith("/") ? `${b}${p}` : `${b}/${p}`;
+}
+
 async function ownerFetchWeb(path, { profileKey, method = "GET", body } = {}) {
   const pk = normalizeProfileKey(profileKey);
   const token = getOwnerToken(pk);
 
-  const res = await fetch(path, {
+  const url = joinUrl(API_BASE, path);
+
+  const res = await fetch(url, {
     method,
     headers: {
-      "content-type": "application/json",
+      ...(body ? { "content-type": "application/json" } : {}),
       "x-profile-key": pk,
+      "X-Profile": pk,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body,
@@ -106,6 +128,8 @@ const EMPTY_FORM = {
   isPublished: true,
 };
 
+/* -------------------- page -------------------- */
+
 export default function OwnerProductsPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -145,7 +169,9 @@ export default function OwnerProductsPage() {
 
   const goBackToIndiVerse = () => {
     if (!profileKey) return navigate("/", { replace: false });
-    navigate(`/world/${encodeURIComponent(profileKey)}`, { state: { profileKey, bgUrl } });
+    navigate(`/world/${encodeURIComponent(profileKey)}`, {
+      state: { profileKey, bgUrl },
+    });
   };
 
   const goOwnerLogin = useCallback(() => {
@@ -162,13 +188,13 @@ export default function OwnerProductsPage() {
 
     const priceDollars = String(f.priceDollars || "").trim();
     const price = Number(priceDollars);
-    if (!Number.isFinite(price) || price < 0) throw new Error("Price must be a valid number");
-
+    if (!Number.isFinite(price) || price < 0) {
+      throw new Error("Price must be a valid number");
+    }
     const priceCents = Math.round(price * 100);
 
     const stockQtyText = String(f.stockQtyText || "").trim();
     const stockQty = stockQtyText === "" ? null : Number.parseInt(stockQtyText, 10);
-
     if (stockQty !== null && (!Number.isFinite(stockQty) || stockQty < 0)) {
       throw new Error("Stock Qty must be empty or a number ≥ 0");
     }
@@ -382,7 +408,9 @@ export default function OwnerProductsPage() {
 
       const saved = json?.item;
       if (saved?._id) {
-        setItems((prev) => prev.map((x) => (String(x?._id) === String(saved._id) ? saved : x)));
+        setItems((prev) =>
+          prev.map((x) => (String(x?._id) === String(saved._id) ? saved : x))
+        );
       }
     } catch (e) {
       fetchList();
@@ -453,6 +481,10 @@ export default function OwnerProductsPage() {
           <button className="op-btn" onClick={() => fetchList({ isRefresh: true })}>
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
+
+          <div style={{ marginLeft: "auto", opacity: 0.75, fontSize: 12, fontWeight: 800 }}>
+            API: {API_BASE.replace(/^https?:\/\//, "")}
+          </div>
         </div>
 
         <div style={styles.filters}>
@@ -522,13 +554,12 @@ export default function OwnerProductsPage() {
                 </div>
 
                 <div style={styles.rowRight} onClick={(e) => e.stopPropagation()}>
-                  <div className={p.isPublished ? "op-badge op-badgeOn" : "op-badge"}>{p.isPublished ? "Published" : "Hidden"}</div>
+                  <div className={p.isPublished ? "op-badge op-badgeOn" : "op-badge"}>
+                    {p.isPublished ? "Published" : "Hidden"}
+                  </div>
+
                   <label className="op-switch">
-                    <input
-                      type="checkbox"
-                      checked={!!p.isPublished}
-                      onChange={() => quickTogglePublished(p)}
-                    />
+                    <input type="checkbox" checked={!!p.isPublished} onChange={() => quickTogglePublished(p)} />
                     <span className="op-switchUi" />
                   </label>
                 </div>
@@ -601,16 +632,8 @@ export default function OwnerProductsPage() {
                 onChange={(v) => setForm((s) => ({ ...s, imageUrlsCsv: v }))}
               />
 
-              <Field
-                label="Sizes (comma separated)"
-                value={form.sizesCsv}
-                onChange={(v) => setForm((s) => ({ ...s, sizesCsv: v }))}
-              />
-              <Field
-                label="Colors (comma separated)"
-                value={form.colorsCsv}
-                onChange={(v) => setForm((s) => ({ ...s, colorsCsv: v }))}
-              />
+              <Field label="Sizes (comma separated)" value={form.sizesCsv} onChange={(v) => setForm((s) => ({ ...s, sizesCsv: v }))} />
+              <Field label="Colors (comma separated)" value={form.colorsCsv} onChange={(v) => setForm((s) => ({ ...s, colorsCsv: v }))} />
 
               <div style={styles.switchRow}>
                 <div style={styles.switchLabel}>In Stock</div>
@@ -637,11 +660,7 @@ export default function OwnerProductsPage() {
               </div>
 
               {!!form._id && (
-                <button
-                  className="op-danger"
-                  disabled={saving}
-                  onClick={() => deleteProduct({ _id: form._id, name: form.name })}
-                >
+                <button className="op-danger" disabled={saving} onClick={() => deleteProduct({ _id: form._id, name: form.name })}>
                   Delete Product
                 </button>
               )}
@@ -685,6 +704,8 @@ function Field({ label, value, onChange, multiline, inputMode, placeholder }) {
     </div>
   );
 }
+
+/* -------------------- styles -------------------- */
 
 const styles = {
   page: {
@@ -748,7 +769,13 @@ const styles = {
     background: "rgba(2,6,23,0.62)",
     backdropFilter: "blur(12px)",
   },
-  headerTitle: { flex: 1, textAlign: "center", fontWeight: 900, letterSpacing: 1, textTransform: "uppercase" },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontWeight: 900,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
   headerRight: { display: "flex", gap: 10, alignItems: "center" },
 
   panelWrap: {
@@ -769,7 +796,13 @@ const styles = {
     boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
   },
 
-  filterRow: { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 10 },
+  filterRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+    marginTop: 10,
+  },
 
   list: {
     marginTop: 14,
@@ -780,12 +813,32 @@ const styles = {
     boxShadow: "0 18px 42px rgba(0,0,0,0.35)",
   },
 
-  rowTitle: { fontSize: 14, fontWeight: 900, color: "#f9fafb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  rowSub: { color: "rgba(203,213,225,0.85)", marginTop: 3, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  rowTitle: {
+    fontSize: 14,
+    fontWeight: 900,
+    color: "#f9fafb",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  rowSub: {
+    color: "rgba(203,213,225,0.85)",
+    marginTop: 3,
+    fontSize: 12,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
 
   rowRight: { display: "flex", alignItems: "center", gap: 10 },
 
-  center: { padding: 18, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" },
+  center: {
+    padding: 18,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   muted: { color: "rgba(148,163,184,0.9)", marginTop: 10, fontWeight: 700 },
 
   errTitle: { fontSize: 18, fontWeight: 900, marginBottom: 8 },
@@ -823,7 +876,14 @@ const styles = {
   modalBody: { padding: 14, overflow: "auto" },
 
   field: { marginBottom: 12 },
-  label: { color: "rgba(148,163,184,0.92)", marginBottom: 6, fontSize: 12, fontWeight: 900, letterSpacing: 1.1, textTransform: "uppercase" },
+  label: {
+    color: "rgba(148,163,184,0.92)",
+    marginBottom: 6,
+    fontSize: 12,
+    fontWeight: 900,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
 
   twoCol: { display: "flex" },
 
@@ -866,6 +926,7 @@ function css() {
     backdrop-filter: blur(10px);
     transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
     user-select:none;
+    white-space: nowrap;
   }
   .op-back:hover{ transform: translateY(-1px); background: rgba(15,23,42,0.55); border-color: rgba(129,140,248,0.45); }
   .op-back:active{ transform: translateY(0) scale(0.995); opacity:0.95; }
@@ -925,6 +986,7 @@ function css() {
     font-weight: 900;
     cursor: pointer;
     letter-spacing: 0.4px;
+    white-space: nowrap;
   }
   .op-btn:hover{ border-color: rgba(129,140,248,0.35); background: rgba(15,23,42,0.55); }
   .op-apply{ border-color: rgba(34,197,94,0.35); }
@@ -953,6 +1015,7 @@ function css() {
     cursor: pointer;
     font-weight: 900;
     letter-spacing: 0.3px;
+    white-space: nowrap;
   }
   .op-chip:hover{ border-color: rgba(129,140,248,0.35); background: rgba(15,23,42,0.55); }
   .op-chipOn{
@@ -1075,6 +1138,7 @@ function css() {
     padding: 8px 12px;
     border-radius: 999px;
     letter-spacing: 0.4px;
+    white-space: nowrap;
   }
   .op-linkPrimary{
     border-color: rgba(56,189,248,0.35);
