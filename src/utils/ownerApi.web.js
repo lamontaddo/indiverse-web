@@ -1,11 +1,14 @@
-// src/utils/ownerApi.web.js ✅ FULL DROP-IN (WEB OWNER API)
+// src/utils/ownerApi.web.js ✅ FULL DROP-IN (WEB OWNER API) — COMPAT + FIXES
 // Fixes Render static-site 404 by ALWAYS calling the backend base URL.
 //
 // ✅ Uses VITE_API_BASE_URL (fallback to https://indiverse-backend.onrender.com)
 // ✅ Adds x-profile-key ALWAYS for owner/admin endpoints
 // ✅ Adds Authorization: Bearer <ownerToken> (profile-scoped)
+// ✅ Keeps legacy localStorage "ownerToken" fallback (compat)
 // ✅ Clears token on 401/403
 // ✅ Returns Response (raw) OR throws with err.code='OWNER_UNAUTHORIZED'
+// ✅ Adds missing export: ownerFetchWeb (so pages importing it won't break)
+// ✅ Keeps existing exports: ownerFetchRawWeb, ownerJsonWeb, normalizeProfileKey, getOwnerToken, clearOwnerToken
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.trim() ||
@@ -20,6 +23,7 @@ function joinUrl(base, path) {
   if (!p) return b;
   return `${b}${p.startsWith("/") ? p : `/${p}`}`;
 }
+
 export function normalizeProfileKey(pk) {
   return String(pk || "").trim().toLowerCase();
 }
@@ -98,21 +102,33 @@ export async function ownerFetchRawWeb(path, options = {}) {
   const bodyIsFormData =
     typeof FormData !== "undefined" && body instanceof FormData;
 
+  // If caller didn't provide a body, do not pass body at all
+  const hasBody = body !== undefined && body !== null;
+
   const headers = {
     Accept: "application/json",
-    ...(bodyIsFormData ? {} : { "Content-Type": "application/json" }),
+    // Only set JSON content-type when we actually have a body and it's not FormData
+    ...(hasBody && !bodyIsFormData ? { "Content-Type": "application/json" } : {}),
     ...(profileKey ? { "x-profile-key": profileKey, "X-Profile": profileKey } : {}),
     ...(headersOverride || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
   // 🔎 keep one debug line so you can SEE the host
-  console.log("[ownerFetchRawWeb]", method, url, "pk=", profileKey, "hasToken=", !!token);
+  console.log(
+    "[ownerFetchRawWeb]",
+    method,
+    url,
+    "pk=",
+    profileKey,
+    "hasToken=",
+    !!token
+  );
 
   const res = await fetch(url, {
     method,
     headers,
-    body,
+    ...(hasBody ? { body } : {}),
     mode: "cors",
     credentials: "include",
     cache: "no-store",
@@ -125,6 +141,14 @@ export async function ownerFetchRawWeb(path, options = {}) {
 
   return res;
 }
+
+/**
+ * ✅ ownerFetchWeb(path, options)
+ * Compatibility alias:
+ * - Some pages import { ownerFetchWeb } from "../utils/ownerApi.web"
+ * - This keeps them working without changing page code
+ */
+export const ownerFetchWeb = ownerFetchRawWeb;
 
 /**
  * ✅ ownerJsonWeb(path, options)
