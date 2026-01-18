@@ -60,7 +60,8 @@ function ionToEmoji(name = "") {
   if (k.includes("call") || k.includes("phone")) return "📞";
   if (k.includes("mail") || k.includes("email")) return "✉️";
 
-  // ✅ messages (more explicit)
+  // ✅ messages (ONLY CHANGE)
+  if (k.includes("chatbubbles")) return "📨";
   if (k.includes("chat") || k.includes("message") || k.includes("messages")) return "💬";
 
   // lists / music / media
@@ -75,6 +76,7 @@ function ionToEmoji(name = "") {
   if (k.includes("home")) return "🏠";
   return "◉";
 }
+
 
 
 export default function OwnerHomePage() {
