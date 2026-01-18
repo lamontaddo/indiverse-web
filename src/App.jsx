@@ -54,7 +54,7 @@ import OwnerPortfolioPage from "./pages/OwnerPortfolioPage.jsx";
 import PortfolioPage from "./pages/PortfolioPage.jsx";
 import PortfolioViewerPage from "./pages/PortfolioViewerPage.jsx";
 import OwnerOrdersPage from "./pages/OwnerOrdersPage.jsx";
-import OwnerPortfolioPage from "./pages/OwnerPortfolioPage.jsx";
+
 // ✅ Temporary stubs
 function Stub({ name }) {
   return (
