@@ -49,39 +49,34 @@ function normalizeOwnerItems(profile) {
 
 // --- Ionicon → Emoji (intentional web stand-in) ---
 // --- Ionicon → Emoji (intentional web stand-in) ---
-function ionToEmoji(name = "") {
+function ionToEmoji(name = "", tile = null) {
   const k = String(name).toLowerCase();
+  const key = String(tile?.key || "").toLowerCase();
+  const to = String(tile?.to || "").toLowerCase();
+  const label = String(tile?.label || "").toLowerCase();
 
-  // 🔎 DEBUG (temporary) — lets you see what is actually coming in
-  // (remove once you confirm)
-  if (k.includes("chat") || k.includes("message") || k.includes("mail")) {
-    console.log("[ionToEmoji] name =", name, "->", k);
-  }
+  // ✅ FORCE messages icon by tile identity (not ionicon)
+  if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
 
-  // ✅ messages FIRST (so nothing else can steal it)
-  if (k.includes("chatbubbles") || k.includes("ownermessages")) return "🗨️";
-  if (k.includes("chat") || k.includes("message") || k.includes("messages")) return "🗨️";
-
-  // about / people
+  // everything else unchanged
   if (k.includes("person")) return "👤";
   if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
 
-  // contacts (leave as-is)
   if (k.includes("call") || k.includes("phone")) return "📞";
   if (k.includes("mail") || k.includes("email")) return "✉️";
 
-  // lists / music / media
+  if (k.includes("chat") || k.includes("message")) return "💬";
+
   if (k.includes("list")) return "📃";
   if (k.includes("music") || k.includes("musical")) return "🎵";
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
 
-  // products
   if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
-
   if (k.includes("home")) return "🏠";
   return "◉";
 }
+
 
 
 
