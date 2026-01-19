@@ -1,11 +1,13 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE + PRODUCTS FIX + PORTFOLIO FIX
+// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE + PRODUCTS FIX + PORTFOLIO FIX + CONSULTATION/ FLOWER ORDERS ALIAS
 // Route: /world/:profileKey/owner/home
 //
 // ✅ FIX: Products tile routes to /world/:profileKey/owner/products
 // ✅ FIX: Portfolio tile now routes to /world/:profileKey/owner/portfolio
+// ✅ FIX: Supports remote-config tiles using `ownerconsultation` by aliasing to /owner/flowerorders
 // ✅ Adds routeMap.ownerproducts + routeMap.ownerorders + routeMap.ownerportfolio
-// ✅ builtOwnerRoutes includes "products" + "orders" + "portfolio"
-// ✅ Adds fallback Products tile + Portfolio tile
+// ✅ Adds routeMap.ownerconsultation + routeMap.ownerflowerorders -> "flowerorders"
+// ✅ builtOwnerRoutes includes "products" + "orders" + "portfolio" + "flowerorders"
+// ✅ Adds fallback Products tile + Portfolio tile + Flower Orders tile
 // ✅ Keeps large icon look + Back to IndiVerse button + enhanced UI
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -22,10 +24,13 @@ const FALLBACK_OWNER_ITEMS = [
   { key: "playlist", label: "Playlist", ionicon: "list", to: "ownerplaylist", size: 165 },
   { key: "music", label: "Music", ionicon: "musical-notes", to: "ownermusic", size: 160 },
 
+  // ✅ consultation / flower orders (alias-safe)
+  { key: "flowerorders", label: "Flower Orders", ionicon: "rose", to: "ownerconsultation", size: 160 },
+
   // ✅ products (important)
   { key: "products", label: "Products", ionicon: "cart", to: "ownerproducts", size: 160 },
 
-  // ✅ NEW: portfolio
+  // ✅ portfolio
   { key: "portfolio", label: "Portfolio", ionicon: "images", to: "ownerportfolio", size: 155 },
 
   { key: "fashion", label: "Fashion", ionicon: "shirt", to: "ownerfashion", size: 155 },
@@ -61,6 +66,10 @@ function ionToEmoji(name = "", tile = null) {
 
   // ✅ FORCE messages icon by tile identity (not ionicon)
   if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
+
+  // ✅ consultation / flower orders
+  if (key === "flowerorders" || to.includes("consultation") || to.includes("flowerorders") || label.includes("flower"))
+    return "🌹";
 
   if (k.includes("person")) return "👤";
   if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
@@ -128,7 +137,7 @@ export default function OwnerHomePage() {
     return `translate3d(${Math.sin(t * p.sx) * p.ax}px, ${Math.cos(t * p.sy) * p.ay}px, 0)`;
   };
 
-  // ✅ MUST include ownerproducts + ownerorders + ownerportfolio
+  // ✅ route aliases (remote config might emit "ownerconsultation")
   const routeMap = {
     ownerabout: "about",
     ownercontacts: "contacts",
@@ -140,12 +149,14 @@ export default function OwnerHomePage() {
 
     ownerproducts: "products",
     ownerorders: "orders",
-
-    // ✅ NEW:
     ownerportfolio: "portfolio",
+
+    // ✅ ALIASES -> /owner/flowerorders
+    ownerflowerorders: "flowerorders",
+    ownerconsultation: "flowerorders",
   };
 
-  // ✅ MUST include products + orders + portfolio
+  // ✅ allow-list for navigation
   const builtOwnerRoutes = new Set([
     "home",
     "about",
@@ -158,15 +169,20 @@ export default function OwnerHomePage() {
     "portfolio",
     "fashion",
     "videos",
+    "flowerorders",
   ]);
 
   const handleTilePress = (tile) => {
     if (!profileKey) return;
 
-    const raw = String(tile.to).toLowerCase();
-    const tool = routeMap[raw] || raw.replace(/^owner/, "");
+    const raw = String(tile.to).toLowerCase().trim();
 
-    // 🔎 helpful to see what it's trying to do
+    // routeMap first; otherwise strip "owner" prefix
+    let tool = routeMap[raw] || raw.replace(/^owner/, "");
+
+    // ✅ extra safety: if remote config uses "consultation" without "owner"
+    if (tool === "consultation") tool = "flowerorders";
+
     console.log("[OwnerHomePage] tile", raw, "-> tool:", tool);
 
     if (builtOwnerRoutes.has(tool)) {

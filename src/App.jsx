@@ -2,6 +2,11 @@
 // IMPORTANT:
 // - Router lives in src/main.jsx (HashRouter for GitHub Pages)
 // - Do NOT wrap App in BrowserRouter here (avoid double routers)
+//
+// ✅ FIXES INCLUDED:
+// - ✅ Adds OWNER consultation alias route: /world/:profileKey/owner/consultation -> OwnerFlowerOrdersPage
+// - ✅ Fixes invalid JSX comment (// ...) inside <Routes> (would break build)
+// - ✅ Removes duplicate /owner/portfolio route (keep one)
 
 import React, { useEffect, useState } from "react";
 import { Routes, Route, Link } from "react-router-dom";
@@ -69,9 +74,7 @@ function Stub({ name }) {
       }}
     >
       <h2 style={{ margin: 0, fontSize: 22 }}>{name}</h2>
-      <p style={{ opacity: 0.7, marginTop: 10 }}>
-        Stub page. Replace with a real screen.
-      </p>
+      <p style={{ opacity: 0.7, marginTop: 10 }}>Stub page. Replace with a real screen.</p>
 
       <Link to="/" style={{ color: "#0ff" }}>
         ← Back to Universe
@@ -113,9 +116,7 @@ function BootGate({ children }) {
         }}
       >
         <div style={{ maxWidth: 520 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>
-            Loading indiVerse…
-          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 1 }}>Loading indiVerse…</div>
           <div style={{ marginTop: 10, opacity: 0.7, fontSize: 13 }}>
             Booting remote config so deep links work.
           </div>
@@ -174,92 +175,43 @@ export default function App() {
           <Route path="/world/:profileKey/games" element={<GamesPage />} />
           <Route path="/world/:profileKey/chat" element={<ChatPage />} />
           <Route path="/world/:profileKey/products" element={<ProductsPage />} />
-          <Route
-            path="/world/:profileKey/products/:productId"
-            element={<ProductDetailsPage />}
-          />
+          <Route path="/world/:profileKey/products/:productId" element={<ProductDetailsPage />} />
           <Route path="/world/:profileKey/cart" element={<CartPage />} />
           <Route path="/world/:profileKey/portfolio" element={<PortfolioPage />} />
-          <Route
-            path="/world/:profileKey/portfolio/view"
-            element={<PortfolioViewerPage />}
-          />
+          <Route path="/world/:profileKey/portfolio/view" element={<PortfolioViewerPage />} />
 
-          {/* ✅ CONSULTATION */}
-          <Route
-            path="/world/:profileKey/flowerorders"
-            element={<FlowerOrdersPage />}
-          />
+          {/* ✅ CONSULTATION (public form submissions) */}
+          <Route path="/world/:profileKey/flowerorders" element={<FlowerOrdersPage />} />
 
           {/* ✅ OWNER LOGIN (MUST be above /:featureKey wildcard) */}
-          <Route
-            path="/world/:profileKey/owner/login"
-            element={<OwnerLoginPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/home"
-            element={<OwnerHomePage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/about"
-            element={<OwnerAboutPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/videos"
-            element={<OwnerVideosPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/flowerorders"
-            element={<OwnerFlowerOrdersPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/products"
-            element={<OwnerProductsPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/playlist"
-            element={<OwnerPlaylistPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/contacts"
-            element={<OwnerContactsPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/messages"
-            element={<OwnerMessagesPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/chat"
-            element={<OwnerChatPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/fashion"
-            element={<OwnerFashionPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/music"
-            element={<OwnerMusicPage />}
-          />
-          <Route
-            path="/world/:profileKey/owner/portfolio"
-            element={<OwnerPortfolioPage />}
-          />
+          <Route path="/world/:profileKey/owner/login" element={<OwnerLoginPage />} />
+          <Route path="/world/:profileKey/owner/home" element={<OwnerHomePage />} />
+          <Route path="/world/:profileKey/owner/about" element={<OwnerAboutPage />} />
+          <Route path="/world/:profileKey/owner/videos" element={<OwnerVideosPage />} />
+
+          {/* ✅ OWNER FLOWER ORDERS (canonical) */}
+          <Route path="/world/:profileKey/owner/flowerorders" element={<OwnerFlowerOrdersPage />} />
+
+          {/* ✅ OWNER FLOWER ORDERS (alias for remote-config tiles that navigate to "consultation") */}
+          <Route path="/world/:profileKey/owner/consultation" element={<OwnerFlowerOrdersPage />} />
+
+          <Route path="/world/:profileKey/owner/products" element={<OwnerProductsPage />} />
+          <Route path="/world/:profileKey/owner/playlist" element={<OwnerPlaylistPage />} />
+          <Route path="/world/:profileKey/owner/contacts" element={<OwnerContactsPage />} />
+          <Route path="/world/:profileKey/owner/messages" element={<OwnerMessagesPage />} />
+          <Route path="/world/:profileKey/owner/chat" element={<OwnerChatPage />} />
+          <Route path="/world/:profileKey/owner/fashion" element={<OwnerFashionPage />} />
+          <Route path="/world/:profileKey/owner/music" element={<OwnerMusicPage />} />
+          <Route path="/world/:profileKey/owner/portfolio" element={<OwnerPortfolioPage />} />
+
+          {/* ✅ Owner Orders (web) */}
+          <Route path="/world/:profileKey/owner/orders" element={<OwnerOrdersPage />} />
 
           <Route path="/portal/:profileKey" element={<LinkPortalPage />} />
           <Route path="/portal/:profileKey/:portalKey" element={<LinkPortalPage />} />
-          // Owner Orders (web)
-<Route
-  path="/world/:profileKey/owner/orders"
-  element={<OwnerOrdersPage />}
-/>
-
-<Route path="/world/:profileKey/owner/portfolio" element={<OwnerPortfolioPage />} />
 
           {/* keep placeholder last among /world routes */}
-          <Route
-            path="/world/:profileKey/:featureKey"
-            element={<PlaceholderFeatureWeb />}
-          />
+          <Route path="/world/:profileKey/:featureKey" element={<PlaceholderFeatureWeb />} />
 
           <Route path="*" element={<Stub name="404" />} />
         </Routes>
