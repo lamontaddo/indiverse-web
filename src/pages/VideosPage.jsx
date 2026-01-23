@@ -1,21 +1,11 @@
-// src/pages/VideosPage.jsx ✅ FULL DROP-IN (WEB) — cinematic grid + hover + modal player
+// src/pages/VideosPage.jsx ✅ FULL DROP-IN (WEB) — FLAT THUMB GRID + modal player
 // Route: /world/:profileKey/videos
 //
-// ✅ Uses SAME world bg image (bgUrl via navigation state from MainScreen)
-// ✅ Fetches: GET /api/videos (requires x-profile-key)
-// ✅ Supports either array OR { videos: [] }
-// ✅ Cards: 16:9, glass, platform badge, hover lift
+// ✅ Flat image tiles (no bubbles)
+// ✅ Responsive grid works (3 -> 2 -> 1) via className
 // ✅ Plays MP4/WebM/MOV inline in a modal (muted by default, click to unmute)
-// ✅ YouTube/IG/Facebook: opens link in new tab (safe + simple)
+// ✅ YouTube/IG/Facebook: opens link in new tab
 // ✅ Includes "Refresh" + "Close"
-//
-// Add route (App.jsx):
-//   import VideosPage from './pages/VideosPage.jsx';
-//   <Route path="/world/:profileKey/videos" element={<VideosPage />} />
-//
-// Make MainScreen send people here:
-//   featureKey === 'videos' -> /world/:profileKey/videos
-//   (You already pass state.bgUrl; keep that)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -127,8 +117,6 @@ function Chip({ children, onClick, variant = 'ghost', disabled, title }) {
 }
 
 function Modal({ open, onClose, children }) {
-  const escRef = useRef(null);
-
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
@@ -143,9 +131,7 @@ function Modal({ open, onClose, children }) {
   return (
     <div style={m.modalRoot} role="dialog" aria-modal="true">
       <div style={m.backdrop} onClick={onClose} />
-      <div style={m.sheet} ref={escRef}>
-        {children}
-      </div>
+      <div style={m.sheet}>{children}</div>
     </div>
   );
 }
@@ -157,7 +143,7 @@ const m = {
     position: 'relative',
     zIndex: 2,
     width: 'min(980px, 96vw)',
-    borderRadius: 22,
+    borderRadius: 14,
     overflow: 'hidden',
     border: '1px solid rgba(255,255,255,0.16)',
     background: 'rgba(15,23,42,0.55)',
@@ -194,10 +180,10 @@ export default function VideosPage() {
 
   // modal player state
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(null); // { title, url, source }
+  const [active, setActive] = useState(null);
   const [muted, setMuted] = useState(true);
 
-  const loadVideos = useCallback(async (reason = 'load') => {
+  const loadVideos = useCallback(async () => {
     try {
       setLoading(true);
       setLoadError('');
@@ -214,7 +200,12 @@ export default function VideosPage() {
           title: String(v.title || 'Untitled'),
           source: String(v.source || v.platform || 'other').toLowerCase(),
           url: typeof v.url === 'string' ? v.url : '',
-          thumbUri: typeof v.thumbUri === 'string' ? v.thumbUri : typeof v.thumbUrl === 'string' ? v.thumbUrl : '',
+          thumbUri:
+            typeof v.thumbUri === 'string'
+              ? v.thumbUri
+              : typeof v.thumbUrl === 'string'
+                ? v.thumbUrl
+                : '',
         }))
         .filter((v) => !!v.url);
 
@@ -227,13 +218,13 @@ export default function VideosPage() {
   }, [activeProfileKey]);
 
   useEffect(() => {
-    loadVideos('mount');
+    loadVideos();
   }, [loadVideos]);
 
   useEffect(() => {
-    const onFocus = () => loadVideos('focus');
+    const onFocus = () => loadVideos();
     const onVis = () => {
-      if (document.visibilityState === 'visible') loadVideos('visible');
+      if (document.visibilityState === 'visible') loadVideos();
     };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVis);
@@ -246,7 +237,6 @@ export default function VideosPage() {
   const onPressVideo = useCallback((v) => {
     if (!v?.url) return;
 
-    // Inline play only for direct video files
     if (isVideoUrl(v.url)) {
       setActive(v);
       setMuted(true);
@@ -254,7 +244,6 @@ export default function VideosPage() {
       return;
     }
 
-    // Everything else: open in new tab
     try {
       window.open(v.url, '_blank', 'noopener,noreferrer');
     } catch {}
@@ -277,15 +266,21 @@ export default function VideosPage() {
               <div style={s.title}>Videos</div>
               <div style={s.kicker}>presence • reels • energy</div>
             </div>
-            <div style={s.meta}>{ownerName} • {subtitle}</div>
+            <div style={s.meta}>
+              {ownerName} • {subtitle}
+            </div>
           </div>
 
           <div style={s.actions}>
-            <Chip onClick={() => loadVideos('manual')} disabled={loading} title="Refresh">
+            <Chip onClick={loadVideos} disabled={loading} title="Refresh">
               ⟳ Refresh
             </Chip>
             <Chip
-              onClick={() => navigate(`/world/${encodeURIComponent(activeProfileKey)}`, { state: { profileKey: activeProfileKey, bgUrl } })}
+              onClick={() =>
+                navigate(`/world/${encodeURIComponent(activeProfileKey)}`, {
+                  state: { profileKey: activeProfileKey, bgUrl },
+                })
+              }
               title="Close"
             >
               ✕ Close
@@ -299,67 +294,54 @@ export default function VideosPage() {
           {loading ? (
             <div style={s.center}>
               <div style={s.spinner} />
-              <div style={{ marginTop: 10, color: '#cfd3dc', fontWeight: 800, letterSpacing: 0.4 }}>
-                Loading videos…
-              </div>
+              <div style={s.loadingText}>Loading videos…</div>
             </div>
           ) : loadError ? (
             <div style={s.center}>
-              <div style={{ color: '#fecaca', fontWeight: 900, marginBottom: 10 }}>
-                {loadError}
-              </div>
-              <Chip variant="primary" onClick={() => loadVideos('retry')}>Try again</Chip>
+              <div style={s.errorText}>{loadError}</div>
+              <Chip variant="primary" onClick={loadVideos}>
+                Try again
+              </Chip>
             </div>
           ) : videos.length === 0 ? (
             <div style={s.center}>
-              <div style={{ fontWeight: 900, letterSpacing: 0.5 }}>No videos yet</div>
-              <div style={{ marginTop: 8, color: '#cfd3dc' }}>
-                Add some in the owner panel and they’ll appear here.
-              </div>
+              <div style={s.emptyTitle}>No videos yet</div>
+              <div style={s.emptySub}>Add some in the owner panel and they’ll appear here.</div>
             </div>
           ) : (
-            <div style={s.grid}>
+            <div className="_videos_grid_fix" style={s.grid}>
               {videos.map((v) => (
                 <button
                   key={v.id}
+                  className="_videos_card_btn"
                   onClick={() => onPressVideo(v)}
                   style={s.cardBtn}
                   title={v.title}
                 >
-                  <div style={s.card}>
-                    {/* preview */}
+                  <div className="_videos_card" style={s.card}>
                     <div style={s.mediaWrap}>
                       {v.thumbUri && isHttpUrl(v.thumbUri) ? (
                         <img src={v.thumbUri} alt="" style={s.thumb} />
                       ) : (
                         <div style={s.thumbFallback}>
-                          <div style={{ fontSize: 26 }}>{platformGlyph(v.source)}</div>
-                          <div style={{ marginTop: 8, opacity: 0.85, fontWeight: 900 }}>
+                          <div style={{ fontSize: 22 }}>{platformGlyph(v.source)}</div>
+                          <div style={{ marginTop: 8, fontWeight: 900, opacity: 0.9 }}>
                             {platformLabel(v.source)}
                           </div>
-                          <div style={{ marginTop: 6, opacity: 0.65, fontSize: 12 }}>
-                            {isVideoUrl(v.url) ? 'Tap to play' : 'Tap to open'}
+                          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                            {isVideoUrl(v.url) ? 'Play' : 'Open'}
                           </div>
                         </div>
                       )}
-                      <div style={s.mediaShade} />
-                      <div style={s.badge}>
-                        <span style={{ opacity: 0.9 }}>{platformGlyph(v.source)}</span>
-                        <span>{platformLabel(v.source)}</span>
-                      </div>
-                      <div style={s.playPill}>
-                        {isVideoUrl(v.url) ? '▶ Play' : '↗ Open'}
-                      </div>
+
+      
                     </div>
 
-                    {/* text */}
                     <div style={s.cardBody}>
                       <div style={s.cardTitle} title={v.title}>
                         {v.title}
                       </div>
-                      <div style={s.cardSub}>
-                        {isVideoUrl(v.url) ? 'Inline playback' : 'External link'}
-                      </div>
+                      <div style={s.cardSub}>{isVideoUrl(v.url) ? 'Plays here' : 'Opens new tab'}</div>
                     </div>
                   </div>
                 </button>
@@ -466,7 +448,7 @@ const s = {
 
   panel: {
     position: 'relative',
-    borderRadius: 24,
+    borderRadius: 18,
     overflow: 'hidden',
     border: '1px solid rgba(255,255,255,0.16)',
     background: 'rgba(255,255,255,0.06)',
@@ -476,7 +458,7 @@ const s = {
     position: 'absolute',
     inset: 0,
     pointerEvents: 'none',
-    background: 'linear-gradient(180deg, rgba(255,255,255,0.11), rgba(255,255,255,0.03))',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02))',
   },
 
   center: {
@@ -495,67 +477,81 @@ const s = {
     borderTopColor: 'rgba(255,255,255,0.75)',
     animation: 'spin 0.9s linear infinite',
   },
+  loadingText: { marginTop: 10, color: '#cfd3dc', fontWeight: 800, letterSpacing: 0.4 },
+  errorText: { color: '#fecaca', fontWeight: 900, marginBottom: 10 },
+  emptyTitle: { fontWeight: 900, letterSpacing: 0.5 },
+  emptySub: { marginTop: 8, color: '#cfd3dc' },
 
+  // FLAT GRID
   grid: {
     position: 'relative',
     padding: 14,
     display: 'grid',
-    gap: 14,
+    gap: 12,
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
   },
-  cardBtn: { border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left' },
+
+  cardBtn: {
+    border: 'none',
+    background: 'transparent',
+    padding: 0,
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+
+  // flatter tile
   card: {
-    borderRadius: 18,
+    borderRadius: 10,
     overflow: 'hidden',
-    border: '1px solid rgba(255,255,255,0.14)',
-    background: 'rgba(0,0,0,0.22)',
-    boxShadow: '0 18px 40px rgba(0,0,0,0.35)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(0,0,0,0.18)',
+    boxShadow: '0 10px 22px rgba(0,0,0,0.28)',
     transform: 'translateY(0px)',
     transition: 'transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease',
   },
+
   mediaWrap: {
     position: 'relative',
     width: '100%',
     aspectRatio: '16 / 9',
     overflow: 'hidden',
+    background: 'rgba(255,255,255,0.04)',
   },
-  thumb: { width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: 'scale(1.02)' },
+  thumb: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
   thumbFallback: {
     width: '100%',
     height: '100%',
     display: 'grid',
     placeItems: 'center',
-    background: 'rgba(255,255,255,0.06)',
     color: '#fff',
   },
-  mediaShade: {
+
+  topBar: {
     position: 'absolute',
-    inset: 0,
-    background: 'linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.78))',
+    inset: 10,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
     pointerEvents: 'none',
   },
-  badge: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
+  leftTag: {
     display: 'inline-flex',
     gap: 8,
     alignItems: 'center',
-    borderRadius: 999,
-    padding: '6px 10px',
-    background: 'rgba(15,23,42,0.85)',
+    borderRadius: 8,
+    padding: '6px 8px',
+    background: 'rgba(0,0,0,0.55)',
     border: '1px solid rgba(255,255,255,0.14)',
     fontWeight: 900,
     fontSize: 11,
     letterSpacing: 0.6,
     textTransform: 'uppercase',
+    backdropFilter: 'blur(6px)',
   },
-  playPill: {
-    position: 'absolute',
-    right: 10,
-    bottom: 10,
-    borderRadius: 999,
-    padding: '6px 10px',
+  rightTag: {
+    borderRadius: 8,
+    padding: '6px 8px',
     background: 'rgba(255,255,255,0.86)',
     color: '#000',
     border: '1px solid rgba(255,255,255,0.25)',
@@ -563,7 +559,8 @@ const s = {
     letterSpacing: 0.6,
     fontSize: 11,
   },
-  cardBody: { padding: 12 },
+
+  cardBody: { padding: 10 },
   cardTitle: {
     fontWeight: 950,
     letterSpacing: 0.3,
@@ -584,29 +581,41 @@ const s = {
     borderBottom: '1px solid rgba(255,255,255,0.12)',
     background: 'rgba(0,0,0,0.20)',
   },
-  modalTitle: { fontWeight: 950, letterSpacing: 0.4, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  modalTitle: {
+    fontWeight: 950,
+    letterSpacing: 0.4,
+    fontSize: 14,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
   modalSub: { marginTop: 4, color: '#cfd3dc', fontSize: 12 },
 
   playerWrap: { position: 'relative', background: '#000' },
   video: { width: '100%', height: 'auto', aspectRatio: '16 / 9', display: 'block' },
 };
 
-// tiny global keyframes (once)
+// tiny global keyframes + responsive + hover
 if (typeof document !== 'undefined' && !document.getElementById('videospage-keyframes')) {
   const st = document.createElement('style');
   st.id = 'videospage-keyframes';
   st.innerHTML = `
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Responsive grid */
     @media (max-width: 980px){
       ._videos_grid_fix{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     }
     @media (max-width: 620px){
       ._videos_grid_fix{ grid-template-columns: 1fr !important; }
     }
+
+    /* Subtle hover lift (kept minimal) */
+    ._videos_card_btn:hover ._videos_card{
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,0.22);
+      box-shadow: 0 16px 30px rgba(0,0,0,0.35);
+    }
   `;
   document.head.appendChild(st);
 }
-
-// Apply responsive className via inline trick:
-// (We can't add className in the object styles, so we attach it by setting it here.)
-// If you want it cleaner, move styles to a CSS file.
