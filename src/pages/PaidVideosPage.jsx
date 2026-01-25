@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { getProfileByKey } from "../services/profileRegistry";
-import { profileFetch } from "../services/profileApi";
+import { profileFetchRaw } from "../services/profileApi";
 
 function cleanTitle(s) {
   return String(s || "").trim() || "Untitled";
