@@ -1,0 +1,867 @@
+// src/pages/PaidVideoPlayerPage.jsx ✅ FULL DROP-IN (Web / Vite)
+// Route: /world/:profileKey/paid-videos/:videoId
+// ✅ Uses backend: GET /api/paid-videos/:id + GET /api/paid-videos/:id/play?mode=preview|full
+// ✅ 30s PREVIEW enforced client-side
+// ✅ Adds Like / Comment / Share (web)
+// ✅ Comments drawer (desktop-friendly) + safe fallbacks if endpoints don’t exist
+// ✅ Compatible with profileFetchRaw
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+
+import { getProfileByKey } from "../services/profileRegistry";
+import { profileFetchRaw } from "../services/profileApi";
+
+const PREVIEW_LIMIT_MS = 30_000;
+
+function cleanStr(v) {
+  const s = String(v || "").trim();
+  return s || "";
+}
+
+function pickUrl(v) {
+  return (
+    v?.externalUrl ||
+    v?.externalURL ||
+    v?.url ||
+    v?.linkUrl ||
+    v?.link ||
+    v?.href ||
+    ""
+  );
+}
+
+async function readJsonSafe(res) {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text || null;
+  }
+}
+
+function unwrapCountLike(meta, field, fallback = 0) {
+  const n = Number(meta?.[field]);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function unwrapBool(meta, field, fallback = false) {
+  const v = meta?.[field];
+  if (typeof v === "boolean") return v;
+  if (v === 1 || v === "1") return true;
+  if (v === 0 || v === "0") return false;
+  return fallback;
+}
+
+function fmtCount(n) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x) || x <= 0) return "0";
+  if (x >= 1_000_000) return `${(x / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (x >= 1_000) return `${(x / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(x);
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // fallback
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export default function PaidVideoPlayerPage() {
+  const nav = useNavigate();
+  const params = useParams();
+  const loc = useLocation();
+
+  const profileKey = String(params.profileKey || "lamont").toLowerCase();
+  const videoId = String(params.videoId || "").trim();
+
+  useMemo(() => getProfileByKey(profileKey), [profileKey]); // kept for parity / future use
+  const videoFromRoute = loc?.state?.video || null;
+
+  const [videoMeta, setVideoMeta] = useState(videoFromRoute);
+  const [loadingMeta, setLoadingMeta] = useState(!videoFromRoute);
+  const [loadingPlay, setLoadingPlay] = useState(true);
+  const [err, setErr] = useState(null);
+
+  const [mode, setMode] = useState("preview"); // preview|full
+  const [playUrl, setPlayUrl] = useState(null);
+
+  const videoRef = useRef(null);
+  const previewStoppedRef = useRef(false);
+
+  const access = String(videoMeta?.access || "free").toLowerCase();
+  const owned = !!videoMeta?.owned || access === "free";
+  const isLocked = access === "paid" && !owned;
+
+  // --- social state (safe defaults) ---
+  const [liked, setLiked] = useState(() => unwrapBool(videoFromRoute, "liked", false));
+  const [likeCount, setLikeCount] = useState(() => unwrapCountLike(videoFromRoute, "likeCount", 0));
+  const [commentCount, setCommentCount] = useState(() => unwrapCountLike(videoFromRoute, "commentCount", 0));
+
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsErr, setCommentsErr] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+
+  // load meta if not provided
+  useEffect(() => {
+    if (!videoId || videoFromRoute) return;
+
+    let alive = true;
+    (async () => {
+      try {
+        setLoadingMeta(true);
+        setErr(null);
+
+        const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}`);
+        const data = await readJsonSafe(res);
+
+        if (!res.ok) throw new Error((data && (data.error || data.message)) || "Unable to load video");
+
+        if (alive) {
+          setVideoMeta(data);
+          // pull social fields if backend provides them
+          setLiked(unwrapBool(data, "liked", false));
+          setLikeCount(unwrapCountLike(data, "likeCount", 0));
+          setCommentCount(unwrapCountLike(data, "commentCount", 0));
+        }
+      } catch (e) {
+        if (alive) setErr(e?.message || "Unable to load video");
+      } finally {
+        if (alive) setLoadingMeta(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [profileKey, videoId, videoFromRoute]);
+
+  // keep mode safe
+  useEffect(() => {
+    if (isLocked && mode === "full") setMode("preview");
+  }, [isLocked, mode]);
+
+  const loadPlayable = useCallback(
+    async (m) => {
+      if (!videoId) return;
+
+      try {
+        previewStoppedRef.current = false;
+        setLoadingPlay(true);
+        setErr(null);
+        setPlayUrl(null);
+
+        const res = await profileFetchRaw(
+          profileKey,
+          `/api/paid-videos/${encodeURIComponent(videoId)}/play?mode=${encodeURIComponent(m)}`
+        );
+        const data = await readJsonSafe(res);
+
+        if (!res.ok) throw new Error((data && (data.error || data.message)) || "Playback unavailable");
+
+        if (data?.mode === "link") {
+          const url = cleanStr(data?.externalUrl);
+          if (url) window.open(url, "_blank", "noopener,noreferrer");
+          throw new Error("This is a link video. Opened in a new tab.");
+        }
+
+        const url = cleanStr(data?.url);
+        if (!url) throw new Error("Missing playback URL");
+
+        setPlayUrl(url);
+      } catch (e) {
+        setErr(e?.message || "Playback unavailable");
+        setPlayUrl(null);
+      } finally {
+        setLoadingPlay(false);
+      }
+    },
+    [profileKey, videoId]
+  );
+
+  useEffect(() => {
+    loadPlayable(mode);
+  }, [mode, loadPlayable]);
+
+  // enforce 30s preview client-side
+  const onTimeUpdate = useCallback(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (!isLocked || mode !== "preview") return;
+    if (previewStoppedRef.current) return;
+
+    const ms = Math.floor((el.currentTime || 0) * 1000);
+    if (ms >= PREVIEW_LIMIT_MS) {
+      previewStoppedRef.current = true;
+      el.pause();
+      setErr("Preview ended — full version on the website.");
+    }
+  }, [isLocked, mode]);
+
+  // prevent seeking beyond 30s in preview
+  const onSeeking = useCallback(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (!isLocked || mode !== "preview") return;
+
+    const limitSec = PREVIEW_LIMIT_MS / 1000;
+    if (el.currentTime > limitSec) el.currentTime = limitSec;
+  }, [isLocked, mode]);
+
+  const title = videoMeta?.title || "Video";
+  const sub = access === "paid" && isLocked ? "Preview only" : access.toUpperCase();
+
+  // --- Like ---
+  const toggleLike = useCallback(async () => {
+    if (!videoId) return;
+
+    // optimistic
+    const nextLiked = !liked;
+    setLiked(nextLiked);
+    setLikeCount((c) => Math.max(0, Number(c || 0) + (nextLiked ? 1 : -1)));
+
+    try {
+      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/like`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggle" }),
+      });
+      const data = await readJsonSafe(res);
+
+      // If endpoint not implemented, we silently keep optimistic UI
+      if (!res.ok) return;
+
+      // Accept flexible response shapes:
+      // { ok:true, liked:true, likeCount: 10 }
+      // { liked:true, count: 10 }
+      // { data:{ liked, likeCount } }
+      const payload = (data && data.data) || data || {};
+      if (typeof payload.liked === "boolean") setLiked(payload.liked);
+      if (payload.likeCount != null) setLikeCount(Number(payload.likeCount) || 0);
+      if (payload.count != null) setLikeCount(Number(payload.count) || 0);
+    } catch {
+      // keep optimistic (no hard fail)
+    }
+  }, [liked, profileKey, videoId]);
+
+  // --- Share ---
+  const share = useCallback(async () => {
+    const url = window.location.href;
+    const shareTitle = title || "Video";
+
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: shareTitle, text: shareTitle, url });
+        return;
+      }
+    } catch {
+      // fall through to clipboard
+    }
+
+    const ok = await copyToClipboard(url);
+    if (ok) {
+      setErr("Link copied to clipboard.");
+      setTimeout(() => setErr(null), 1400);
+    } else {
+      window.prompt("Copy link:", url);
+    }
+  }, [title]);
+
+  // --- Comments ---
+  const loadComments = useCallback(async () => {
+    if (!videoId) return;
+    try {
+      setCommentsLoading(true);
+      setCommentsErr(null);
+
+      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/comments`);
+      const data = await readJsonSafe(res);
+
+      if (!res.ok) {
+        // if route isn't implemented yet, show friendly message
+        setComments([]);
+        setCommentsErr("Comments aren’t available yet for this video.");
+        return;
+      }
+
+      const list =
+        (Array.isArray(data) && data) ||
+        data?.comments ||
+        data?.items ||
+        data?.rows ||
+        data?.data ||
+        [];
+
+      setComments(Array.isArray(list) ? list : []);
+      // update count if backend provides
+      if (data?.commentCount != null) setCommentCount(Number(data.commentCount) || 0);
+      else setCommentCount((c) => Math.max(Number(c || 0), Array.isArray(list) ? list.length : 0));
+    } catch {
+      setComments([]);
+      setCommentsErr("Unable to load comments.");
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, [profileKey, videoId]);
+
+  useEffect(() => {
+    if (!commentsOpen) return;
+    loadComments();
+  }, [commentsOpen, loadComments]);
+
+  const postComment = useCallback(async () => {
+    const text = cleanStr(commentText);
+    if (!text || postingComment) return;
+
+    setPostingComment(true);
+    setCommentsErr(null);
+
+    try {
+      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const data = await readJsonSafe(res);
+
+      if (!res.ok) {
+        setCommentsErr((data && (data.error || data.message)) || "Unable to post comment.");
+        return;
+      }
+
+      // Flexible: backend can return created comment or full list
+      const created = data?.comment || data?.item || data?.data || null;
+      if (created && typeof created === "object") {
+        setComments((prev) => [created, ...(prev || [])]);
+        setCommentCount((c) => Number(c || 0) + 1);
+      } else {
+        // fallback: reload list
+        await loadComments();
+      }
+
+      setCommentText("");
+    } catch {
+      setCommentsErr("Unable to post comment.");
+    } finally {
+      setPostingComment(false);
+    }
+  }, [commentText, loadComments, postingComment, profileKey, videoId]);
+
+  // ESC closes comments
+  useEffect(() => {
+    if (!commentsOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setCommentsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [commentsOpen]);
+
+  return (
+    <div style={S.root}>
+      <div style={S.bg} />
+
+      <div style={S.topOverlay}>
+        <button onClick={() => nav(-1)} style={S.backBtn} aria-label="Back" title="Back">
+          ←
+        </button>
+
+        <div style={{ minWidth: 0 }}>
+          <div style={S.title} title={title}>
+            {title}
+          </div>
+          <div style={S.sub}>{sub}</div>
+        </div>
+
+        {!isLocked ? (
+          <button
+            onClick={() => setMode((m) => (m === "preview" ? "full" : "preview"))}
+            style={S.modeBtn}
+            title="Toggle preview/full"
+          >
+            {mode === "preview" ? "Preview" : "Full"}
+          </button>
+        ) : (
+          <span style={{ width: 76 }} />
+        )}
+      </div>
+
+      <div style={S.playerWrap}>
+        {loadingMeta || loadingPlay ? (
+          <div style={S.center}>
+            <div style={S.spinner} />
+            <div style={S.centerText}>Loading…</div>
+          </div>
+        ) : err && !playUrl ? (
+          <div style={S.center}>
+            <div style={S.err}>{err}</div>
+            <button onClick={() => loadPlayable(mode)} style={S.retryBtn}>
+              Retry
+            </button>
+          </div>
+        ) : playUrl ? (
+          <video
+            key={playUrl}
+            ref={videoRef}
+            src={playUrl}
+            style={S.video}
+            controls
+            autoPlay
+            playsInline
+            onTimeUpdate={onTimeUpdate}
+            onSeeking={onSeeking}
+            onError={() => setErr("Playback error")}
+          />
+        ) : (
+          <div style={S.center}>
+            <div style={S.centerText}>No playable source</div>
+          </div>
+        )}
+      </div>
+
+      {/* Action Bar */}
+      <div style={S.actionBar}>
+        <button onClick={toggleLike} style={{ ...S.actionBtn, ...(liked ? S.actionBtnActive : {}) }} title="Like">
+          <span style={S.actionIcon}>{liked ? "❤️" : "🤍"}</span>
+          <span style={S.actionText}>Like</span>
+          <span style={S.actionCount}>{fmtCount(likeCount)}</span>
+        </button>
+
+        <button onClick={() => setCommentsOpen(true)} style={S.actionBtn} title="Comments">
+          <span style={S.actionIcon}>💬</span>
+          <span style={S.actionText}>Comments</span>
+          <span style={S.actionCount}>{fmtCount(commentCount)}</span>
+        </button>
+
+        <button onClick={share} style={S.actionBtn} title="Share">
+          <span style={S.actionIcon}>🔗</span>
+          <span style={S.actionText}>Share</span>
+        </button>
+      </div>
+
+      {/* Lock note */}
+      {isLocked ? (
+        <div style={S.lockNote}>Preview is limited to 30 seconds. Full version on the website.</div>
+      ) : null}
+
+      {/* Comments Drawer */}
+      {commentsOpen ? (
+        <div style={S.drawerOverlay} onMouseDown={() => setCommentsOpen(false)}>
+          <div style={S.drawer} onMouseDown={(e) => e.stopPropagation()}>
+            <div style={S.drawerHeader}>
+              <div style={{ minWidth: 0 }}>
+                <div style={S.drawerTitle}>Comments</div>
+                <div style={S.drawerSub} title={title}>
+                  {title}
+                </div>
+              </div>
+              <button onClick={() => setCommentsOpen(false)} style={S.drawerClose} aria-label="Close comments">
+                ✕
+              </button>
+            </div>
+
+            <div style={S.drawerComposer}>
+              <textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                placeholder="Write a comment…"
+                style={S.textarea}
+                rows={3}
+              />
+              <div style={S.drawerComposerRow}>
+                <button
+                  onClick={postComment}
+                  style={{ ...S.postBtn, ...(postingComment ? S.postBtnDisabled : {}) }}
+                  disabled={postingComment || !cleanStr(commentText)}
+                >
+                  {postingComment ? "Posting…" : "Post"}
+                </button>
+              </div>
+              {commentsErr ? <div style={S.commentsErr}>{commentsErr}</div> : null}
+            </div>
+
+            <div style={S.drawerBody}>
+              {commentsLoading ? (
+                <div style={{ ...S.centerText, padding: 12 }}>Loading comments…</div>
+              ) : comments?.length ? (
+                <div style={S.commentList}>
+                  {comments.map((c, i) => {
+                    const id = String(c?._id || c?.id || i);
+                    const name = cleanStr(c?.userName || c?.name || c?.author || "User");
+                    const text = cleanStr(c?.text || c?.body || c?.message || "");
+                    const when = cleanStr(c?.createdAt || c?.created_at || "");
+                    return (
+                      <div key={id} style={S.commentCard}>
+                        <div style={S.commentTop}>
+                          <div style={S.commentName} title={name}>
+                            {name}
+                          </div>
+                          {when ? <div style={S.commentWhen}>{when}</div> : null}
+                        </div>
+                        <div style={S.commentText}>{text || "…"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ ...S.centerText, padding: 12 }}>No comments yet.</div>
+              )}
+            </div>
+
+            <div style={S.drawerFooter}>
+              <button onClick={loadComments} style={S.drawerReload}>
+                Refresh
+              </button>
+              <div style={S.drawerHint}>Press Esc to close</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* status line (small) */}
+      {err && playUrl ? <div style={S.toast}>{err}</div> : null}
+    </div>
+  );
+}
+
+const S = {
+  root: {
+    minHeight: "100vh",
+    background: "#000",
+    color: "#fff",
+    position: "relative",
+    overflow: "hidden",
+    fontFamily:
+      'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+  },
+  bg: {
+    position: "fixed",
+    inset: 0,
+    background: "radial-gradient(1200px 800px at 50% 20%, rgba(20,20,40,0.6), rgba(0,0,0,1))",
+    pointerEvents: "none",
+  },
+
+  topOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "14px 14px",
+    background: "linear-gradient(to bottom, rgba(0,0,0,0.88), rgba(0,0,0,0.40), rgba(0,0,0,0))",
+    backdropFilter: "blur(10px)",
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.40)",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 16,
+    fontWeight: 900,
+  },
+  title: {
+    fontWeight: 900,
+    letterSpacing: 0.2,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: "70vw",
+  },
+  sub: { color: "rgba(255,255,255,0.7)", fontWeight: 700, fontSize: 12, marginTop: 2 },
+  modeBtn: {
+    marginLeft: "auto",
+    padding: "10px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.10)",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+    minWidth: 76,
+  },
+
+  playerWrap: {
+    minHeight: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 70,
+    paddingBottom: 98, // room for action bar
+  },
+  video: {
+    width: "100%",
+    height: "calc(100vh - 170px)",
+    maxWidth: 1200,
+    background: "#000",
+    objectFit: "contain",
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
+  },
+
+  center: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 12,
+    padding: 24,
+    textAlign: "center",
+  },
+  centerText: { color: "rgba(255,255,255,0.78)", fontWeight: 800 },
+  err: { color: "#fca5a5", fontWeight: 900, maxWidth: 720 },
+
+  retryBtn: {
+    padding: "10px 14px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.10)",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+
+  spinner: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    border: "3px solid rgba(255,255,255,0.18)",
+    borderTopColor: "rgba(255,255,255,0.85)",
+    animation: "pvspin 0.9s linear infinite",
+  },
+
+  // Action Bar
+  actionBar: {
+    position: "fixed",
+    left: 0,
+    right: 0,
+    bottom: 18,
+    zIndex: 12,
+    display: "flex",
+    justifyContent: "center",
+    padding: "0 14px",
+    pointerEvents: "none",
+  },
+  actionBtn: {
+    pointerEvents: "auto",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "12px 14px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.55)",
+    backdropFilter: "blur(12px)",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 900,
+    letterSpacing: 0.2,
+    margin: "0 6px",
+    boxShadow: "0 18px 40px rgba(0,0,0,0.50)",
+  },
+  actionBtnActive: {
+    border: "1px solid rgba(255,255,255,0.22)",
+    background: "rgba(255,255,255,0.10)",
+  },
+  actionIcon: { fontSize: 16 },
+  actionText: { fontSize: 13 },
+  actionCount: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.78)",
+    fontWeight: 900,
+    marginLeft: -2,
+  },
+
+  lockNote: {
+    position: "fixed",
+    left: 14,
+    right: 14,
+    bottom: 78,
+    zIndex: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.55)",
+    color: "rgba(255,255,255,0.82)",
+    fontWeight: 800,
+    fontSize: 12,
+    textAlign: "center",
+  },
+
+  // Comments Drawer
+  drawerOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 50,
+    background: "rgba(0,0,0,0.55)",
+    backdropFilter: "blur(4px)",
+    display: "flex",
+    justifyContent: "flex-end",
+  },
+  drawer: {
+    width: "min(460px, 92vw)",
+    height: "100%",
+    background: "rgba(10,10,14,0.96)",
+    borderLeft: "1px solid rgba(255,255,255,0.10)",
+    boxShadow: "-30px 0 80px rgba(0,0,0,0.65)",
+    display: "flex",
+    flexDirection: "column",
+  },
+  drawerHeader: {
+    padding: "16px 14px 12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+  drawerTitle: { fontSize: 18, fontWeight: 950, letterSpacing: 0.2 },
+  drawerSub: {
+    marginTop: 2,
+    color: "rgba(255,255,255,0.65)",
+    fontWeight: 800,
+    fontSize: 12,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: 300,
+  },
+  drawerClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 16,
+    fontWeight: 900,
+  },
+
+  drawerComposer: {
+    padding: 14,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+  textarea: {
+    width: "100%",
+    resize: "none",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#fff",
+    padding: 12,
+    fontWeight: 700,
+    outline: "none",
+    lineHeight: 1.3,
+  },
+  drawerComposerRow: {
+    display: "flex",
+    justifyContent: "flex-end",
+    paddingTop: 10,
+  },
+  postBtn: {
+    padding: "10px 14px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.10)",
+    color: "#fff",
+    fontWeight: 950,
+    cursor: "pointer",
+  },
+  postBtnDisabled: {
+    opacity: 0.55,
+    cursor: "not-allowed",
+  },
+  commentsErr: {
+    marginTop: 10,
+    color: "#fca5a5",
+    fontWeight: 900,
+    fontSize: 12,
+  },
+
+  drawerBody: {
+    flex: 1,
+    overflow: "auto",
+    padding: 14,
+  },
+  commentList: { display: "flex", flexDirection: "column", gap: 10 },
+  commentCard: {
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.04)",
+    padding: 12,
+  },
+  commentTop: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  commentName: { fontWeight: 950, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  commentWhen: { color: "rgba(255,255,255,0.55)", fontWeight: 800, fontSize: 11, whiteSpace: "nowrap" },
+  commentText: { marginTop: 6, color: "rgba(255,255,255,0.88)", fontWeight: 700, fontSize: 13, lineHeight: 1.35 },
+
+  drawerFooter: {
+    padding: 14,
+    borderTop: "1px solid rgba(255,255,255,0.08)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  drawerReload: {
+    padding: "10px 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.08)",
+    color: "#fff",
+    fontWeight: 950,
+    cursor: "pointer",
+  },
+  drawerHint: { color: "rgba(255,255,255,0.55)", fontWeight: 800, fontSize: 12 },
+
+  // small toast line for status updates
+  toast: {
+    position: "fixed",
+    left: 14,
+    right: 14,
+    bottom: 140,
+    zIndex: 20,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.65)",
+    color: "rgba(255,255,255,0.86)",
+    fontWeight: 900,
+    fontSize: 12,
+    textAlign: "center",
+  },
+};
+
+// inject keyframes once
+if (typeof document !== "undefined" && !document.getElementById("pvspin-style")) {
+  const s = document.createElement("style");
+  s.id = "pvspin-style";
+  s.textContent = `@keyframes pvspin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`;
+  document.head.appendChild(s);
+}

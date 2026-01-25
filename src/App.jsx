@@ -60,6 +60,8 @@ import PortfolioPage from "./pages/PortfolioPage.jsx";
 import PortfolioViewerPage from "./pages/PortfolioViewerPage.jsx";
 import OwnerOrdersPage from "./pages/OwnerOrdersPage.jsx";
 import PaidVideosPage from "./pages/PaidVideosPage.jsx";
+import PaidVideoPlayerPage from "./pages/PaidVideoPlayerPage.jsx";
+
 // ✅ Temporary stubs
 function Stub({ name }) {
   return (
@@ -168,7 +170,9 @@ export default function App() {
           <Route path="/world/:profileKey/about" element={<AboutPage />} />
           <Route path="/world/:profileKey/contact" element={<ContactPage />} />
           <Route path="/world/:profileKey/videos" element={<VideosPage />} />
-          <Route path="/world/:profileKey/paidvideos" element={<PaidVideosPage />} />          <Route path="/world/:profileKey/playlist" element={<PlaylistPage />} />
+          <Route path="/world/:profileKey/paidvideos" element={<PaidVideosPage />} /> 
+          <Route path="/world/:profileKey/paid-videos/:videoId" element={<PaidVideoPlayerPage />} />
+          <Route path="/world/:profileKey/playlist" element={<PlaylistPage />} />
           <Route path="/world/:profileKey/fashion" element={<FashionPage />} />
           <Route path="/world/:profileKey/music" element={<MusicPage />} />
           <Route path="/world/:profileKey/energy" element={<EnergyPage />} />

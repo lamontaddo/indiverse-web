@@ -1,8 +1,15 @@
-// src/pages/PaidVideosPage.jsx ✅ FULL DROP-IN (Web / Vite) — COMPATIBLE WITH profileFetch()
-// ✅ Uses your existing profileFetch(profileKey, path)
-// ✅ Signed thumbnail safe: cache-bust + <img> remount
+// src/pages/PaidVideosPage.jsx ✅ FULL DROP-IN (Web / Vite) — BETTER WEB UI (NO LOGIC BREAKS)
+// ✅ Uses profileFetchRaw(profileKey, path)
+// ✅ FIX: DO NOT append cache-bust params to S3 presigned URLs (breaks signature)
+// ✅ Instead: remount <img> via key + only bust non-signed URLs
 // ✅ Link videos open in new tab
-// ✅ S3 videos navigate to player page (change path if you use a different route)
+// ✅ S3 videos navigate to player page
+// ✅ Web polish:
+//    - centered max-width layout
+//    - responsive grid (2 -> 3 -> 4 cols)
+//    - hover/focus states + subtle lift
+//    - sticky top bar with counts + refresh icon
+//    - better empty/error cards
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -12,23 +19,6 @@ import { profileFetchRaw } from "../services/profileApi";
 
 function cleanTitle(s) {
   return String(s || "").trim() || "Untitled";
-}
-
-function unwrapList(res) {
-  if (Array.isArray(res)) return res;
-
-  if (res && typeof res === "object") {
-    if (Array.isArray(res.data)) return res.data;
-    if (Array.isArray(res.videos)) return res.videos;
-    if (Array.isArray(res.items)) return res.items;
-    if (Array.isArray(res.rows)) return res.rows;
-
-    // normalized ok shape
-    if (res.ok === true && Array.isArray(res.data)) return res.data;
-    if (res.__ok === true && Array.isArray(res.data)) return res.data;
-  }
-
-  return null;
 }
 
 function pickUrl(v) {
@@ -43,9 +33,22 @@ function pickUrl(v) {
   );
 }
 
-function bust(url) {
+// ✅ Detect S3 presigned urls (don’t mutate querystring)
+function isPresignedUrl(url) {
+  const u = String(url || "");
+  return (
+    u.includes("X-Amz-Signature=") ||
+    u.includes("X-Amz-Algorithm=") ||
+    u.includes("X-Amz-Credential=") ||
+    u.includes("X-Amz-Date=")
+  );
+}
+
+// ✅ only cache-bust NON-signed urls
+function safeBust(url) {
   const u = String(url || "").trim();
   if (!u) return "";
+  if (isPresignedUrl(u)) return u; // ✅ DO NOT TOUCH
   const join = u.includes("?") ? "&" : "?";
   return `${u}${join}v=${Date.now()}`;
 }
@@ -61,43 +64,35 @@ export default function PaidVideosPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState(null);
   const [rows, setRows] = useState([]);
+  const [brokenThumbs, setBrokenThumbs] = useState(() => new Set());
 
   const fetchList = useCallback(async () => {
     try {
       setErr(null);
-  
-      // 🔑 use RAW fetch so we fully control parsing
+
       const res = await profileFetchRaw(profileKey, "/api/paid-videos");
-  
       if (!res.ok) {
         const t = await res.text();
         throw new Error(t || `Request failed (${res.status})`);
       }
-  
+
       const data = await res.json();
-  
-      // backend may return:
-      // - array
-      // - { ok:true, data: [...] }
-      // - { videos: [...] }
       const list =
         (Array.isArray(data) && data) ||
         data?.data ||
         data?.videos ||
         data?.items ||
         [];
-  
-      if (!Array.isArray(list)) {
-        throw new Error("Invalid paid-videos response");
-      }
-  
+
+      if (!Array.isArray(list)) throw new Error("Invalid paid-videos response");
+
       setRows(list);
+      setBrokenThumbs(new Set()); // reset broken thumbs on reload
     } catch (e) {
       setErr(e?.message || "Unable to load");
       setRows([]);
     }
   }, [profileKey]);
-  
 
   useEffect(() => {
     let alive = true;
@@ -124,24 +119,16 @@ export default function PaidVideosPage() {
     (video) => {
       const srcType = String(video?.sourceType || "s3").toLowerCase();
 
-      // ✅ Link behavior
       if (srcType === "link") {
         const url = String(pickUrl(video) || "").trim();
-        if (!url) {
-          window.alert("Missing link: No URL found.");
-          return;
-        }
+        if (!url) return window.alert("Missing link: No URL found.");
         window.open(url, "_blank", "noopener,noreferrer");
         return;
       }
 
-      // ✅ S3 behavior -> go to player page
       const access = String(video?.access || "free").toLowerCase();
       const owned = !!video?.owned || access === "free";
 
-      // ⚠️ IMPORTANT:
-      // This route must exist in your App.jsx to work.
-      // If you don't have a player page yet, leave this for now or change to your existing route.
       nav(`/world/${profileKey}/paid-videos/${String(video?._id || "")}`, {
         state: { video: { ...video, owned } },
       });
@@ -151,49 +138,99 @@ export default function PaidVideosPage() {
 
   const titleLine = profile?.label ? `${profile.label} • ${profileKey}` : profileKey;
 
-  return (
-    <div style={S.root}>
-      <div style={S.bg} />
+  const stats = useMemo(() => {
+    let preview = 0;
+    let full = 0;
+    let links = 0;
 
-      <header style={S.header}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={S.h1}>Content</div>
-          <div style={S.h2} title={titleLine}>
-            {titleLine}
+    for (const v of rows) {
+      const srcType = String(v?.sourceType || "s3").toLowerCase();
+      if (srcType === "link") {
+        links++;
+        full++;
+        continue;
+      }
+      const access = String(v?.access || "free").toLowerCase();
+      const owned = !!v?.owned || access === "free";
+      const locked = access === "paid" && !owned;
+      if (locked) preview++;
+      else full++;
+    }
+
+    return { total: rows.length, preview, full, links };
+  }, [rows]);
+
+  return (
+    <div className="pv-root">
+      <div className="pv-bg" />
+
+      <header className="pv-topbar">
+        <div className="pv-topbarInner">
+          <button
+            className="pv-iconBtn"
+            onClick={() => window.history.back()}
+            aria-label="Back"
+            title="Back"
+          >
+            ✕
+          </button>
+
+          <div className="pv-titleBlock">
+            <div className="pv-h1">Content</div>
+            <div className="pv-h2" title={titleLine}>
+              {titleLine}
+            </div>
+
+            <div className="pv-stats">
+              <span className="pv-dot" />
+              <span>{stats.total} items</span>
+              {stats.preview ? <span className="pv-chip pv-chipDim">Preview {stats.preview}</span> : null}
+              {stats.full ? <span className="pv-chip">Full {stats.full}</span> : null}
+              {stats.links ? <span className="pv-chip pv-chipLink">Links {stats.links}</span> : null}
+            </div>
+          </div>
+
+          <div className="pv-actions">
+            <button
+              className={`pv-refreshBtn ${refreshing ? "pv-refreshBtnBusy" : ""}`}
+              onClick={onRefresh}
+              disabled={refreshing}
+              title="Refresh"
+              aria-label="Refresh"
+            >
+              <span className={`pv-refreshIcon ${refreshing ? "pv-spin" : ""}`}>⟳</span>
+              <span className="pv-refreshText">{refreshing ? "Refreshing" : "Refresh"}</span>
+            </button>
           </div>
         </div>
-
-        <button
-          onClick={() => window.history.back()}
-          style={S.closeBtn}
-          aria-label="Back"
-          title="Back"
-        >
-          ✕
-        </button>
       </header>
 
-      <div style={S.actions}>
-        <button onClick={onRefresh} style={S.refreshBtn} disabled={refreshing}>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
-
-      {loading ? (
-        <div style={S.center}>
-          <div style={S.spinner} />
-          <div style={S.centerText}>Loading videos…</div>
-        </div>
-      ) : err ? (
-        <div style={S.center}>
-          <div style={{ ...S.centerText, color: "#fca5a5" }}>{err}</div>
-          <button onClick={fetchList} style={S.retryBtn}>
-            Retry
-          </button>
-        </div>
-      ) : (
-        <main style={S.gridWrap}>
-          <div style={S.grid}>
+      <div className="pv-shell">
+        {loading ? (
+          <div className="pv-centerCard">
+            <div className="pv-spinner" />
+            <div className="pv-centerText">Loading videos…</div>
+          </div>
+        ) : err ? (
+          <div className="pv-centerCard">
+            <div className="pv-errTitle">Couldn’t load videos</div>
+            <div className="pv-errSub">{String(err)}</div>
+            <div className="pv-row">
+              <button className="pv-pill" onClick={fetchList}>
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="pv-centerCard">
+            <div className="pv-emptyIcon">🎬</div>
+            <div className="pv-errTitle">No videos yet</div>
+            <div className="pv-errSub">
+              Publish videos from the owner dashboard to see them here.
+            </div>
+          </div>
+        ) : (
+          <main className="pv-grid">
             {rows.map((item, idx) => {
               const title = cleanTitle(item?.title);
 
@@ -207,280 +244,379 @@ export default function PaidVideosPage() {
               const badgeText = locked ? "Preview" : "Full";
               const stateLabel = locked ? "Preview" : "Full access";
 
-              const thumb = item?.thumbnailUrl || "";
-              const thumbSrc = thumb ? bust(thumb) : "";
+              const thumb =
+                item?.thumbnailUrl ||
+                item?.thumbUrl ||
+                item?.thumbnail ||
+                item?.thumb ||
+                item?.posterUrl ||
+                item?.coverUrl ||
+                item?.imageUrl ||
+                "";
+
+              // ✅ DO NOT break signed URLs
+              const thumbSrc = thumb ? safeBust(thumb) : "";
+              const id = String(item?._id || idx);
+
+              const isBroken = brokenThumbs?.has?.(id);
+              const showImg = !!thumbSrc && !isBroken;
+
+              // ✅ remount key without mutating signed urls
+              const imgKey = thumb ? `${id}:${thumb}` : `${id}:no-thumb`;
 
               return (
                 <button
-                  key={String(item?._id || idx)}
+                  key={id}
+                  className="pv-card"
                   onClick={() => openVideo(item)}
-                  style={{
-                    ...S.card,
-                    borderRight: idx % 2 === 0 ? S.hairlineBorder : "none",
-                  }}
+                  aria-label={title}
                 >
-                  <div style={S.thumb}>
-                    {thumbSrc ? (
+                  <div className="pv-media">
+                    {showImg ? (
                       <img
-                        key={thumbSrc || "no-thumb"} // ✅ remount if signed URL changes
+                        key={imgKey}
                         src={thumbSrc}
                         alt={title}
-                        style={S.thumbImg}
+                        className="pv-img"
                         loading="lazy"
-                        onError={(e) => {
-                          // hide broken img and show placeholder underneath
-                          e.currentTarget.style.display = "none";
+                        onError={() => {
+                          setBrokenThumbs((prev) => {
+                            const next = new Set(prev || []);
+                            next.add(id);
+                            return next;
+                          });
                         }}
                       />
-                    ) : null}
-
-                    {!thumbSrc ? (
-                      <div style={S.noThumb}>
-                        <div style={S.noThumbIcon}>🎥</div>
+                    ) : (
+                      <div className="pv-noThumb">
+                        <div className="pv-noThumbIcon">🎥</div>
                       </div>
-                    ) : null}
+                    )}
 
-                    <div style={S.footerGrad} />
+                    <div className="pv-grad" />
 
-                    <div style={{ ...S.badge, ...(locked ? S.badgeLocked : {}) }}>
+                    <div className={`pv-badge ${locked ? "pv-badgeLocked" : ""}`}>
                       {badgeText}
                     </div>
 
-                    {locked ? <div style={S.lockDot}>🔒</div> : null}
-                    {isLink ? <div style={S.linkDot}>🔗</div> : null}
+                    {locked ? <div className="pv-dotIcon" title="Locked">🔒</div> : null}
+                    {isLink ? (
+                      <div className="pv-dotIcon pv-dotIconLink" title="Link">
+                        🔗
+                      </div>
+                    ) : null}
 
-                    <div style={S.footer}>
-                      <div style={S.cardTitle} title={title}>
+                    <div className="pv-footer">
+                      <div className="pv-cardTitle" title={title}>
                         {title}
                       </div>
-                      <div style={S.cardSub}>{stateLabel}</div>
+                      <div className="pv-cardSub">{stateLabel}</div>
                     </div>
                   </div>
                 </button>
               );
             })}
-          </div>
+          </main>
+        )}
+      </div>
 
-          {rows.length === 0 ? (
-            <div style={S.empty}>
-              <div style={S.emptyTitle}>No videos yet</div>
-              <div style={S.emptySub}>
-                Publish videos from the owner dashboard to see them here.
-              </div>
-            </div>
-          ) : null}
-        </main>
-      )}
+      <StyleTag />
     </div>
   );
 }
 
-const S = {
-  root: {
-    minHeight: "100vh",
-    background: "#000",
-    color: "#fff",
-    position: "relative",
-    overflowX: "hidden",
-    fontFamily:
-      'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
-  },
-  bg: {
-    position: "fixed",
-    inset: 0,
-    background:
-      "radial-gradient(1200px 800px at 50% 20%, rgba(20,20,40,0.6), rgba(0,0,0,1))",
-    pointerEvents: "none",
-  },
+function StyleTag() {
+  return (
+    <style>{`
+      .pv-root{
+        min-height: 100vh;
+        background:#000;
+        color:#fff;
+        position:relative;
+        overflow-x:hidden;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      }
+      .pv-bg{
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(1200px 800px at 50% 15%, rgba(30,30,60,0.55), rgba(0,0,0,1)),
+          radial-gradient(900px 600px at 15% 50%, rgba(0,140,255,0.10), rgba(0,0,0,0)),
+          radial-gradient(900px 600px at 85% 55%, rgba(255,0,150,0.08), rgba(0,0,0,0));
+      }
 
-  header: {
-    position: "sticky",
-    top: 0,
-    zIndex: 5,
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: "18px 16px 12px",
-    background:
-      "linear-gradient(to bottom, rgba(0,0,0,0.92), rgba(0,0,0,0.55), rgba(0,0,0,0))",
-    backdropFilter: "blur(10px)",
-  },
-  h1: { fontSize: 34, fontWeight: 900, letterSpacing: 0.2, lineHeight: "38px" },
-  h2: {
-    marginTop: 4,
-    color: "rgba(255,255,255,0.7)",
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  closeBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.06)",
-    color: "#fff",
-    fontSize: 18,
-    cursor: "pointer",
-  },
+      .pv-topbar{
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: linear-gradient(to bottom, rgba(0,0,0,0.92), rgba(0,0,0,0.55), rgba(0,0,0,0));
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      .pv-topbarInner{
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 16px 18px 14px;
+        display:flex;
+        align-items:center;
+        gap: 14px;
+      }
 
-  actions: { padding: "0 16px 10px" },
-  refreshBtn: {
-    padding: "10px 14px",
-    borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.10)",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-  },
+      .pv-iconBtn{
+        width: 42px;
+        height: 42px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.06);
+        color:#fff;
+        font-size: 20px;
+        cursor:pointer;
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+      }
+      .pv-iconBtn:hover{ background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18); }
+      .pv-iconBtn:active{ transform: scale(0.98); }
 
-  center: {
-    paddingTop: 80,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 12,
-  },
-  centerText: { color: "rgba(255,255,255,0.75)", fontWeight: 800 },
-  spinner: {
-    width: 28,
-    height: 28,
-    borderRadius: 999,
-    border: "3px solid rgba(255,255,255,0.18)",
-    borderTopColor: "rgba(255,255,255,0.85)",
-    animation: "spin 0.9s linear infinite",
-  },
-  retryBtn: {
-    marginTop: 6,
-    padding: "10px 14px",
-    borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.10)",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-  },
+      .pv-titleBlock{ flex: 1; min-width: 0; }
+      .pv-h1{ font-size: 34px; font-weight: 950; letter-spacing: 0.2px; line-height: 36px; }
+      .pv-h2{
+        margin-top: 4px;
+        color: rgba(255,255,255,0.72);
+        font-weight: 800;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .pv-stats{
+        margin-top: 10px;
+        display:flex;
+        align-items:center;
+        gap: 10px;
+        flex-wrap: wrap;
+        color: rgba(255,255,255,0.70);
+        font-weight: 800;
+        font-size: 12px;
+        letter-spacing: 0.2px;
+      }
+      .pv-dot{
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.55);
+      }
+      .pv-chip{
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.06);
+        color: rgba(255,255,255,0.84);
+      }
+      .pv-chipDim{ background: rgba(0,0,0,0.28); }
+      .pv-chipLink{ background: rgba(0,0,0,0.22); border-color: rgba(255,255,255,0.08); }
 
-  gridWrap: { paddingBottom: 18 },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  },
-  hairlineBorder: "1px solid rgba(255,255,255,0.08)",
-  card: {
-    padding: 0,
-    margin: 0,
-    border: "none",
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
-    background: "transparent",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  thumb: {
-    position: "relative",
-    width: "100%",
-    height: 230,
-    background: "rgba(255,255,255,0.04)",
-    overflow: "hidden",
-  },
-  thumbImg: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+      .pv-actions{ display:flex; gap: 10px; align-items:center; }
+      .pv-refreshBtn{
+        display:flex;
+        align-items:center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(255,255,255,0.10);
+        color:#fff;
+        font-weight: 950;
+        cursor:pointer;
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+      }
+      .pv-refreshBtn:hover{ background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.20); }
+      .pv-refreshBtn:active{ transform: scale(0.99); }
+      .pv-refreshBtn:disabled{ opacity: 0.6; cursor: default; }
+      .pv-refreshIcon{ display:inline-block; font-size: 16px; line-height: 1; }
+      .pv-refreshText{ font-size: 12px; letter-spacing: 0.6px; text-transform: uppercase; }
+      .pv-spin{ animation: pvspin 0.9s linear infinite; }
 
-  noThumb: {
-    position: "absolute",
-    inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(255,255,255,0.04)",
-  },
-  noThumbIcon: { fontSize: 28, opacity: 0.65 },
+      .pv-shell{
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 16px 18px 28px;
+      }
 
-  footerGrad: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 96,
-    background:
-      "linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.62))",
-  },
+      .pv-centerCard{
+        margin-top: 18px;
+        border-radius: 22px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.06);
+        backdrop-filter: blur(10px);
+        padding: 26px 18px;
+        display:flex;
+        flex-direction: column;
+        align-items:center;
+        gap: 10px;
+        text-align:center;
+      }
+      .pv-centerText{ color: rgba(255,255,255,0.76); font-weight: 900; }
+      .pv-errTitle{ font-weight: 950; font-size: 16px; letter-spacing: 0.2px; }
+      .pv-errSub{ color: rgba(255,255,255,0.70); font-weight: 800; max-width: 780px; }
+      .pv-row{ display:flex; gap: 10px; margin-top: 6px; }
+      .pv-pill{
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(0,0,0,0.25);
+        color:#fff;
+        font-weight: 950;
+        cursor:pointer;
+      }
+      .pv-pill:hover{ background: rgba(255,255,255,0.10); }
 
-  badge: {
-    position: "absolute",
-    top: 10,
-    left: 10,
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "rgba(0,0,0,0.40)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    fontWeight: 900,
-    fontSize: 12,
-    letterSpacing: 0.2,
-  },
-  badgeLocked: { background: "rgba(0,0,0,0.60)" },
+      .pv-emptyIcon{ font-size: 30px; opacity: 0.9; margin-bottom: 4px; }
 
-  lockDot: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 30,
-    height: 30,
-    borderRadius: 999,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(0,0,0,0.40)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    fontSize: 14,
-  },
-  linkDot: {
-    position: "absolute",
-    top: 10,
-    right: 46,
-    width: 30,
-    height: 30,
-    borderRadius: 999,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "rgba(0,0,0,0.32)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    fontSize: 14,
-  },
+      .pv-spinner{
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        border: 3px solid rgba(255,255,255,0.18);
+        border-top-color: rgba(255,255,255,0.85);
+        animation: pvspin 0.9s linear infinite;
+      }
 
-  footer: { position: "absolute", left: 12, right: 12, bottom: 10 },
-  cardTitle: {
-    fontWeight: 900,
-    fontSize: 15,
-    letterSpacing: 0.2,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  cardSub: {
-    marginTop: 3,
-    color: "rgba(255,255,255,0.72)",
-    fontWeight: 800,
-    fontSize: 12,
-  },
+      .pv-grid{
+        display:grid;
+        gap: 14px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      @media (min-width: 860px){
+        .pv-grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+      @media (min-width: 1180px){
+        .pv-grid{ grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      }
 
-  empty: { paddingTop: 40, textAlign: "center" },
-  emptyTitle: { fontWeight: 900, marginTop: 4 },
-  emptySub: {
-    marginTop: 8,
-    color: "rgba(255,255,255,0.65)",
-    fontWeight: 700,
-    maxWidth: 520,
-    marginInline: "auto",
-  },
-};
+      .pv-card{
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+        border-radius: 18px;
+        outline: none;
+      }
+      .pv-card:focus-visible .pv-media{
+        box-shadow: 0 0 0 3px rgba(0,255,255,0.25), 0 26px 60px rgba(0,0,0,0.45);
+        border-color: rgba(0,255,255,0.22);
+      }
 
-// inject keyframes once
-if (typeof document !== "undefined" && !document.getElementById("pv-spin-style")) {
-  const s = document.createElement("style");
-  s.id = "pv-spin-style";
-  s.textContent = `@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`;
-  document.head.appendChild(s);
+      .pv-media{
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        min-height: 210px;
+        overflow: hidden;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.10);
+        box-shadow: 0 18px 44px rgba(0,0,0,0.42);
+        transform: translateZ(0);
+        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, opacity 140ms ease;
+      }
+      .pv-card:hover .pv-media{
+        transform: translateY(-2px);
+        border-color: rgba(255,255,255,0.18);
+        box-shadow: 0 26px 60px rgba(0,0,0,0.50);
+      }
+      .pv-card:active .pv-media{ transform: translateY(-1px) scale(0.995); opacity: 0.96; }
+
+      .pv-img{
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display:block;
+      }
+
+      .pv-noThumb{
+        position:absolute;
+        inset:0;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        background:
+          radial-gradient(800px 400px at 30% 20%, rgba(255,255,255,0.06), rgba(255,255,255,0.02)),
+          rgba(255,255,255,0.03);
+      }
+      .pv-noThumbIcon{ font-size: 28px; opacity: 0.70; }
+
+      .pv-grad{
+        position:absolute;
+        left:0; right:0; bottom:0;
+        height: 56%;
+        background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.72));
+        pointer-events:none;
+      }
+
+      .pv-badge{
+        position:absolute;
+        top: 12px;
+        left: 12px;
+        padding: 7px 11px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(0,0,0,0.36);
+        color:#fff;
+        font-weight: 950;
+        font-size: 12px;
+        letter-spacing: 0.2px;
+        backdrop-filter: blur(10px);
+      }
+      .pv-badgeLocked{ background: rgba(0,0,0,0.56); }
+
+      .pv-dotIcon{
+        position:absolute;
+        top: 12px;
+        right: 12px;
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(0,0,0,0.36);
+        font-size: 14px;
+        backdrop-filter: blur(10px);
+      }
+      .pv-dotIconLink{ right: 52px; background: rgba(0,0,0,0.30); }
+
+      .pv-footer{
+        position:absolute;
+        left: 14px;
+        right: 14px;
+        bottom: 12px;
+      }
+      .pv-cardTitle{
+        font-weight: 950;
+        font-size: 15px;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-shadow: 0 10px 24px rgba(0,0,0,0.55);
+      }
+      .pv-cardSub{
+        margin-top: 4px;
+        color: rgba(255,255,255,0.76);
+        font-weight: 850;
+        font-size: 12px;
+        text-shadow: 0 10px 24px rgba(0,0,0,0.55);
+      }
+
+      @keyframes pvspin{ from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+      @media (prefers-reduced-motion: reduce){
+        .pv-card:hover .pv-media{ transform:none; }
+        .pv-media{ transition:none; }
+        .pv-spin{ animation:none; }
+        .pv-spinner{ animation:none; }
+      }
+    `}</style>
+  );
 }
