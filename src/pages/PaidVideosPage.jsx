@@ -65,31 +65,39 @@ export default function PaidVideosPage() {
   const fetchList = useCallback(async () => {
     try {
       setErr(null);
-
-      // ✅ uses your existing profileFetch helper (adds x-profile-key)
-      const res = await profileFetch(profileKey, "/api/paid-videos");
-      if (!res || res.ok !== true) {
-        throw new Error(res?.error || res?.message || "Failed to load");
+  
+      // 🔑 use RAW fetch so we fully control parsing
+      const res = await profileFetchRaw(profileKey, "/api/paid-videos");
+  
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Request failed (${res.status})`);
       }
-
-      // profileFetch returns {ok:true, data} OR {ok:true, ...object}
-      const list = unwrapList(res) || unwrapList(res?.data) || (Array.isArray(res?.data) ? res.data : null);
-
+  
+      const data = await res.json();
+  
+      // backend may return:
+      // - array
+      // - { ok:true, data: [...] }
+      // - { videos: [...] }
+      const list =
+        (Array.isArray(data) && data) ||
+        data?.data ||
+        data?.videos ||
+        data?.items ||
+        [];
+  
       if (!Array.isArray(list)) {
-        // common case: backend returns raw array but profileFetch wraps it into data
-        if (Array.isArray(res?.data)) {
-          setRows(res.data);
-          return;
-        }
-        throw new Error("Failed to load");
+        throw new Error("Invalid paid-videos response");
       }
-
+  
       setRows(list);
     } catch (e) {
       setErr(e?.message || "Unable to load");
       setRows([]);
     }
   }, [profileKey]);
+  
 
   useEffect(() => {
     let alive = true;
