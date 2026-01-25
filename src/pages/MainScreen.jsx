@@ -214,26 +214,34 @@ function ionToEmoji(name = '') {
   
 
 
-function resolveWorldRoute(profileKey, bubble, bgUrl) {
+  function resolveWorldRoute(profileKey, bubble, bgUrl) {
     const raw = bubble?.to || bubble?.key || '';
   
+    // normalize once, predictably
     const k = String(raw)
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '')
-      .replace(/[-_]/g, '');
+      .replace(/[_]/g, '');
+  
+    const state = { profileKey, bgUrl };
+  
+    // ✅ PAID VIDEOS (explicit + stable)
+    if (k === 'paidvideos' || k === 'paidvideo') {
+      return { path: `/world/${profileKey}/paidvideos`, state };
+    }
   
     // ✅ PRODUCTS
     if (['products', 'product', 'productscreen', 'shop', 'store'].includes(k)) {
-      return { path: `/world/${profileKey}/products`, state: { profileKey, bgUrl } };
+      return { path: `/world/${profileKey}/products`, state };
     }
   
     // ✅ CART
     if (['cart', 'cartscreen', 'checkout'].includes(k)) {
-      return { path: `/world/${profileKey}/cart?mode=products`, state: { profileKey, bgUrl } };
+      return { path: `/world/${profileKey}/cart?mode=products`, state };
     }
   
-    // ✅ FLOWER ORDERS (aka consultation)
+    // ✅ FLOWER ORDERS / CONSULTATION
     if (
       [
         'flowerorders',
@@ -248,17 +256,20 @@ function resolveWorldRoute(profileKey, bubble, bgUrl) {
         'orderflowers',
       ].includes(k)
     ) {
-      return { path: `/world/${profileKey}/flowerorders`, state: { profileKey, bgUrl } };
+      return { path: `/world/${profileKey}/flowerorders`, state };
     }
   
-    // known static routes
-    if (['about', 'contact', 'videos', 'playlist', 'music', 'fashion', 'energy', 'games'].includes(k)) {
-      return { path: `/world/${profileKey}/${k}`, state: { profileKey, bgUrl } };
+    // ✅ KNOWN STATIC ROUTES
+    if (
+      ['about', 'contact', 'videos', 'playlist', 'music', 'fashion', 'energy', 'games', 'chat'].includes(k)
+    ) {
+      return { path: `/world/${profileKey}/${k}`, state };
     }
   
-    // fallback (generic feature)
-    return { path: `/world/${profileKey}/${k}`, state: { profileKey, bgUrl } };
+    // ✅ FALLBACK (generic feature → placeholder or real page)
+    return { path: `/world/${profileKey}/${k}`, state };
   }
+  
   
   
 
@@ -408,20 +419,22 @@ export default function MainScreen() {
   const handleTabPress = useCallback(
     (tab) => {
       setActiveTab(tab.label);
-
+  
+      // indiVerse home
       if (tab.to === MUNIVERSE_SENTINEL) {
         navigate('/');
         return;
       }
-
-      const featureKey = String(tab.to || tab.key || '').trim().toLowerCase() || 'main';
-
-      navigate(`/world/${encodeURIComponent(activeProfileKey)}/${encodeURIComponent(featureKey)}`, {
-        state: { profileKey: activeProfileKey, bgUrl: worldBgUrl },
-      });
+  
+      // route tabs through the SAME resolver as bubbles
+      const bubbleLike = { key: tab.key, to: tab.to };
+      const { path, state } = resolveWorldRoute(activeProfileKey, bubbleLike, worldBgUrl);
+  
+      navigate(path, { state });
     },
     [activeProfileKey, navigate, worldBgUrl]
   );
+  
 
   // secret hold handlers
   const isConnectBubble = (b) => {
