@@ -4,12 +4,7 @@
 // ✅ Instead: remount <img> via key + only bust non-signed URLs
 // ✅ Link videos open in new tab
 // ✅ S3 videos navigate to player page
-// ✅ Web polish:
-//    - centered max-width layout
-//    - responsive grid (2 -> 3 -> 4 cols)
-//    - hover/focus states + subtle lift
-//    - sticky top bar with counts + refresh icon
-//    - better empty/error cards
+// ✅ Soft CTA added (pill button) — no nested <button> (valid HTML)
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -87,7 +82,7 @@ export default function PaidVideosPage() {
       if (!Array.isArray(list)) throw new Error("Invalid paid-videos response");
 
       setRows(list);
-      setBrokenThumbs(new Set()); // reset broken thumbs on reload
+      setBrokenThumbs(new Set());
     } catch (e) {
       setErr(e?.message || "Unable to load");
       setRows([]);
@@ -225,9 +220,7 @@ export default function PaidVideosPage() {
           <div className="pv-centerCard">
             <div className="pv-emptyIcon">🎬</div>
             <div className="pv-errTitle">No videos yet</div>
-            <div className="pv-errSub">
-              Publish videos from the owner dashboard to see them here.
-            </div>
+            <div className="pv-errSub">Publish videos from the owner dashboard to see them here.</div>
           </div>
         ) : (
           <main className="pv-grid">
@@ -254,22 +247,31 @@ export default function PaidVideosPage() {
                 item?.imageUrl ||
                 "";
 
-              // ✅ DO NOT break signed URLs
               const thumbSrc = thumb ? safeBust(thumb) : "";
               const id = String(item?._id || idx);
 
               const isBroken = brokenThumbs?.has?.(id);
               const showImg = !!thumbSrc && !isBroken;
 
-              // ✅ remount key without mutating signed urls
               const imgKey = thumb ? `${id}:${thumb}` : `${id}:no-thumb`;
 
+              // ✅ Soft CTA label
+              const ctaText = isLink ? "Open" : locked ? "Preview" : "Watch";
+
               return (
-                <button
+                <div
                   key={id}
                   className="pv-card"
-                  onClick={() => openVideo(item)}
+                  role="button"
+                  tabIndex={0}
                   aria-label={title}
+                  onClick={() => openVideo(item)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openVideo(item);
+                    }
+                  }}
                 >
                   <div className="pv-media">
                     {showImg ? (
@@ -295,10 +297,6 @@ export default function PaidVideosPage() {
 
                     <div className="pv-grad" />
 
-                    <div className={`pv-badge ${locked ? "pv-badgeLocked" : ""}`}>
-                      {badgeText}
-                    </div>
-
                     {locked ? <div className="pv-dotIcon" title="Locked">🔒</div> : null}
                     {isLink ? (
                       <div className="pv-dotIcon pv-dotIconLink" title="Link">
@@ -307,13 +305,31 @@ export default function PaidVideosPage() {
                     ) : null}
 
                     <div className="pv-footer">
-                      <div className="pv-cardTitle" title={title}>
-                        {title}
+                      <div className="pv-footerRow">
+                        <div className="pv-footerText">
+                          <div className="pv-cardTitle" title={title}>
+                            {title}
+                          </div>
+                          <div className="pv-cardSub">{stateLabel}</div>
+                        </div>
+
+                        {/* ✅ Soft CTA button (no nested button issue because outer is a div) */}
+                        <button
+                          className="pv-ctaBtn"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openVideo(item);
+                          }}
+                          aria-label={ctaText}
+                          title={ctaText}
+                        >
+                          {ctaText} →
+                        </button>
                       </div>
-                      <div className="pv-cardSub">{stateLabel}</div>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </main>
@@ -493,14 +509,9 @@ function StyleTag() {
       }
 
       .pv-card{
-        padding: 0;
-        margin: 0;
-        border: none;
-        background: transparent;
-        cursor: pointer;
-        text-align: left;
         border-radius: 18px;
         outline: none;
+        cursor: pointer;
       }
       .pv-card:focus-visible .pv-media{
         box-shadow: 0 0 0 3px rgba(0,255,255,0.25), 0 26px 60px rgba(0,0,0,0.45);
@@ -593,6 +604,14 @@ function StyleTag() {
         right: 14px;
         bottom: 12px;
       }
+      .pv-footerRow{
+        display:flex;
+        align-items:flex-end;
+        justify-content:space-between;
+        gap: 10px;
+      }
+      .pv-footerText{ min-width: 0; }
+
       .pv-cardTitle{
         font-weight: 950;
         font-size: 15px;
@@ -609,6 +628,26 @@ function StyleTag() {
         font-size: 12px;
         text-shadow: 0 10px 24px rgba(0,0,0,0.55);
       }
+
+      /* ✅ Soft CTA */
+      .pv-ctaBtn{
+        flex: 0 0 auto;
+        padding: 9px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.16);
+        background: rgba(255,255,255,0.10);
+        color: #fff;
+        font-weight: 950;
+        cursor: pointer;
+        backdrop-filter: blur(10px);
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+        white-space: nowrap;
+      }
+      .pv-ctaBtn:hover{
+        background: rgba(255,255,255,0.14);
+        border-color: rgba(255,255,255,0.22);
+      }
+      .pv-ctaBtn:active{ transform: scale(0.99); opacity: 0.92; }
 
       @keyframes pvspin{ from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
       @media (prefers-reduced-motion: reduce){
