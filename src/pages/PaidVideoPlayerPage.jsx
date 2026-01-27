@@ -2,7 +2,7 @@
 // Route: /world/:profileKey/paid-videos/:videoId
 // ✅ Uses backend: GET /api/paid-videos/:id + GET /api/paid-videos/:id/play?mode=preview|full
 // ✅ 30s PREVIEW enforced client-side
-// ✅ At 30s: shows Purchase Box with Buy -> Stripe redirect (instead of plain error)
+// ✅ At 30s: shows Purchase Box with Buy -> Stripe redirect (via /api/checkout/session)
 // ✅ Adds Like / Comment / Share (web)
 // ✅ Comments drawer + safe fallbacks if endpoints don’t exist
 // ✅ Compatible with profileFetchRaw
@@ -18,18 +18,6 @@ const PREVIEW_LIMIT_MS = 30_000;
 function cleanStr(v) {
   const s = String(v || "").trim();
   return s || "";
-}
-
-function pickUrl(v) {
-  return (
-    v?.externalUrl ||
-    v?.externalURL ||
-    v?.url ||
-    v?.linkUrl ||
-    v?.link ||
-    v?.href ||
-    ""
-  );
 }
 
 async function readJsonSafe(res) {
@@ -84,10 +72,72 @@ async function copyToClipboard(text) {
   }
 }
 
-/** ✅ Change this ONE function if your checkout route differs */
-function checkoutPath(videoId) {
-  // Example: POST /api/paid-videos/:id/checkout -> { url }
-  return `/api/paid-videos/${encodeURIComponent(videoId)}/checkout`;
+function moneyFromCents(cents, currency = "usd") {
+  const n = Number(cents || 0) / 100;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: String(currency || "usd").toUpperCase(),
+    }).format(n);
+  } catch {
+    return `$${n.toFixed(2)}`;
+  }
+}
+
+// ✅ uses your existing checkout route (same one MusicPage uses)
+async function createVideoCheckoutSession({ profileKey, videoId, token = "", buyerUserId = "" }) {
+  const headers = {
+    "Content-Type": "application/json",
+    "x-profile-key": String(profileKey || ""),
+  };
+  if (token) headers.Authorization = `Bearer ${String(token)}`;
+  if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+
+  const res = await profileFetchRaw(profileKey, `/api/checkout/session`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ itemType: "video", videoId: String(videoId) }),
+  });
+
+  const data = await readJsonSafe(res);
+  if (!res.ok) throw new Error((data && (data.error || data.message)) || "Unable to start checkout");
+
+  const url = cleanStr(data?.url);
+  if (!url) throw new Error("No checkout URL returned");
+  return url;
+}
+
+/* -------------------- optional: same JWT helpers as MusicPage -------------------- */
+function isMongoObjectId(s) {
+  return typeof s === "string" && /^[a-f0-9]{24}$/i.test(s.trim());
+}
+function decodeJwtPayload(jwtToken) {
+  try {
+    const t = String(jwtToken || "").trim();
+    if (!t) return null;
+    const parts = t.split(".");
+    if (parts.length < 2) return null;
+
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+    const json = atob(b64 + pad);
+
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+function decodeJwtUserId(jwtToken) {
+  const p = decodeJwtPayload(jwtToken);
+  if (!p) return null;
+
+  const direct = p.userId || p.id || p._id || null;
+  if (direct) return String(direct);
+
+  const sub = p.sub ? String(p.sub) : "";
+  if (isMongoObjectId(sub)) return sub;
+
+  return null;
 }
 
 export default function PaidVideoPlayerPage() {
@@ -115,6 +165,22 @@ export default function PaidVideoPlayerPage() {
   const access = String(videoMeta?.access || "free").toLowerCase();
   const owned = !!videoMeta?.owned || access === "free";
   const isLocked = access === "paid" && !owned;
+
+  // ---- auth (same storage key as MusicPage) ----
+  const [token, setToken] = useState(() => localStorage.getItem("buyerToken") || "");
+  const isAuthed = !!token;
+  const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
+
+  useEffect(() => {
+    const syncToken = () => setToken(localStorage.getItem("buyerToken") || "");
+    window.addEventListener("focus", syncToken);
+    window.addEventListener("storage", syncToken);
+    syncToken();
+    return () => {
+      window.removeEventListener("focus", syncToken);
+      window.removeEventListener("storage", syncToken);
+    };
+  }, [loc?.key]);
 
   // --- purchase box state ---
   const [purchaseOpen, setPurchaseOpen] = useState(false);
@@ -213,45 +279,42 @@ export default function PaidVideoPlayerPage() {
     loadPlayable(mode);
   }, [mode, loadPlayable]);
 
-  // ✅ open purchase box (used by 30s cutoff and also by button)
   const openPurchase = useCallback(() => {
     setCheckoutErr(null);
     setPurchaseOpen(true);
   }, []);
 
-  // ✅ Stripe checkout redirect
+  const ensureAuthed = useCallback(() => {
+    if (isAuthed && token) return true;
+    nav("/auth/login", {
+      state: { nextRoute: `/world/${profileKey}/paid-videos/${videoId}`, nextState: { video: videoMeta || null } },
+    });
+    return false;
+  }, [isAuthed, token, nav, profileKey, videoId, videoMeta]);
+
   const startCheckout = useCallback(async () => {
     if (!videoId || checkoutBusy) return;
+    if (!ensureAuthed()) return;
+
     try {
       setCheckoutBusy(true);
       setCheckoutErr(null);
 
-      const res = await profileFetchRaw(profileKey, checkoutPath(videoId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          // optional passthrough for your backend if you want it
-          videoId,
-          profileKey,
-          // recommended: where to return
-          successUrl: window.location.href,
-          cancelUrl: window.location.href,
-        }),
+      const url = await createVideoCheckoutSession({
+        profileKey,
+        videoId,
+        token,
+        buyerUserId: buyerUserId || "",
       });
 
-      const data = await readJsonSafe(res);
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || "Unable to start checkout");
-
-      const url = cleanStr(data?.url || data?.checkoutUrl || data?.sessionUrl);
-      if (!url) throw new Error("Missing checkout URL");
-
-      window.location.href = url; // ✅ Stripe redirect
+      // ✅ Stripe redirect
+      window.location.href = url;
     } catch (e) {
       setCheckoutErr(e?.message || "Checkout failed");
     } finally {
       setCheckoutBusy(false);
     }
-  }, [checkoutBusy, profileKey, videoId]);
+  }, [buyerUserId, checkoutBusy, ensureAuthed, profileKey, token, videoId]);
 
   // enforce 30s preview client-side -> pause + show purchase box
   const onTimeUpdate = useCallback(() => {
@@ -266,7 +329,6 @@ export default function PaidVideoPlayerPage() {
       try {
         el.pause();
       } catch {}
-      // ⛔️ no more "Preview ended — full version on the website."
       setErr(null);
       openPurchase();
     }
@@ -283,6 +345,9 @@ export default function PaidVideoPlayerPage() {
   }, [isLocked, mode]);
 
   const title = videoMeta?.title || "Video";
+  const currency = String(videoMeta?.currency || "usd");
+  const priceCents = Number(videoMeta?.priceCents || 0);
+  const priceLabel = priceCents > 0 ? moneyFromCents(priceCents, currency) : "Purchase";
   const sub = access === "paid" && isLocked ? "Preview only" : access.toUpperCase();
 
   // Like
@@ -499,7 +564,6 @@ export default function PaidVideoPlayerPage() {
           <span style={S.actionText}>Share</span>
         </button>
 
-        {/* ✅ optional: show Buy button always when locked */}
         {isLocked ? (
           <button onClick={openPurchase} style={{ ...S.actionBtn, ...S.buyBtn }} title="Buy full access">
             <span style={S.actionIcon}>🛒</span>
@@ -508,7 +572,7 @@ export default function PaidVideoPlayerPage() {
         ) : null}
       </div>
 
-      {/* Purchase Box (30s cutoff + manual Buy) */}
+      {/* Purchase Box */}
       {purchaseOpen ? (
         <div style={S.modalOverlay} onMouseDown={() => setPurchaseOpen(false)}>
           <div style={S.modal} onMouseDown={(e) => e.stopPropagation()}>
@@ -525,9 +589,13 @@ export default function PaidVideoPlayerPage() {
             </div>
 
             <div style={S.modalBody}>
-              <div style={S.modalMsg}>
-                Your preview ended. Purchase full access to keep watching.
-              </div>
+              <div style={S.modalMsg}>Your preview ended. Purchase full access to keep watching.</div>
+
+              {!isAuthed ? (
+                <div style={S.modalHint}>
+                  You must sign in first to purchase. Click <b>Buy</b> and you’ll be sent to login.
+                </div>
+              ) : null}
 
               {checkoutErr ? <div style={S.modalErr}>{checkoutErr}</div> : null}
 
@@ -537,14 +605,10 @@ export default function PaidVideoPlayerPage() {
                   style={{ ...S.primaryBtn, ...(checkoutBusy ? S.primaryBtnBusy : {}) }}
                   disabled={checkoutBusy}
                 >
-                  {checkoutBusy ? "Redirecting…" : "Buy full access"}
+                  {checkoutBusy ? "Redirecting…" : `Buy (${priceLabel})`}
                 </button>
 
-                <button
-                  onClick={() => setPurchaseOpen(false)}
-                  style={S.secondaryBtn}
-                  disabled={checkoutBusy}
-                >
+                <button onClick={() => setPurchaseOpen(false)} style={S.secondaryBtn} disabled={checkoutBusy}>
                   Not now
                 </button>
               </div>
@@ -781,17 +845,10 @@ const S = {
     border: "1px solid rgba(255,255,255,0.22)",
     background: "rgba(255,255,255,0.10)",
   },
-  buyBtn: {
-    border: "1px solid rgba(0,255,255,0.20)",
-  },
+  buyBtn: { border: "1px solid rgba(0,255,255,0.20)" },
   actionIcon: { fontSize: 16 },
   actionText: { fontSize: 13 },
-  actionCount: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.78)",
-    fontWeight: 900,
-    marginLeft: -2,
-  },
+  actionCount: { fontSize: 12, color: "rgba(255,255,255,0.78)", fontWeight: 900, marginLeft: -2 },
 
   lockNote: {
     position: "fixed",
@@ -884,7 +941,7 @@ const S = {
   },
   modalHint: { marginTop: 10, color: "rgba(255,255,255,0.60)", fontWeight: 800, fontSize: 12 },
 
-  // Comments drawer (unchanged)
+  // Comments drawer
   drawerOverlay: {
     position: "fixed",
     inset: 0,
@@ -934,10 +991,7 @@ const S = {
     fontWeight: 900,
   },
 
-  drawerComposer: {
-    padding: 14,
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
-  },
+  drawerComposer: { padding: 14, borderBottom: "1px solid rgba(255,255,255,0.08)" },
   textarea: {
     width: "100%",
     resize: "none",
