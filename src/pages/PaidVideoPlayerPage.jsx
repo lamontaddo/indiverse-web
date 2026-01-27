@@ -3,9 +3,10 @@
 // ✅ Uses backend: GET /api/paid-videos/:id + GET /api/paid-videos/:id/play?mode=preview|full
 // ✅ 30s PREVIEW enforced client-side
 // ✅ At 30s: shows Purchase Box with Buy -> Stripe redirect (via /api/checkout/session)
-// ✅ Adds Like / Comment / Share (web)
+// ✅ Like / Comment / Share (web)
 // ✅ Comments drawer + safe fallbacks if endpoints don’t exist
-// ✅ Compatible with profileFetchRaw
+// ✅ TOP-RIGHT LABEL FIX: shows "Preview" only when locked, otherwise "Full Access" (no toggle)
+// ✅ Auto-switches mode to full when owned (paid + purchased) or free
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -182,6 +183,14 @@ export default function PaidVideoPlayerPage() {
     };
   }, [loc?.key]);
 
+  // ✅ keep mode correct:
+  // - locked => preview
+  // - owned/free => full
+  useEffect(() => {
+    if (isLocked && mode !== "preview") setMode("preview");
+    if (!isLocked && mode !== "full") setMode("full");
+  }, [isLocked, mode]);
+
   // --- purchase box state ---
   const [purchaseOpen, setPurchaseOpen] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
@@ -231,11 +240,6 @@ export default function PaidVideoPlayerPage() {
       alive = false;
     };
   }, [profileKey, videoId, videoFromRoute]);
-
-  // keep mode safe
-  useEffect(() => {
-    if (isLocked && mode === "full") setMode("preview");
-  }, [isLocked, mode]);
 
   const loadPlayable = useCallback(
     async (m) => {
@@ -307,7 +311,6 @@ export default function PaidVideoPlayerPage() {
         buyerUserId: buyerUserId || "",
       });
 
-      // ✅ Stripe redirect
       window.location.href = url;
     } catch (e) {
       setCheckoutErr(e?.message || "Checkout failed");
@@ -348,7 +351,9 @@ export default function PaidVideoPlayerPage() {
   const currency = String(videoMeta?.currency || "usd");
   const priceCents = Number(videoMeta?.priceCents || 0);
   const priceLabel = priceCents > 0 ? moneyFromCents(priceCents, currency) : "Purchase";
-  const sub = access === "paid" && isLocked ? "Preview only" : access.toUpperCase();
+
+  // ✅ subtitle under title
+  const sub = access === "paid" && isLocked ? "Preview only" : "FULL ACCESS";
 
   // Like
   const toggleLike = useCallback(async () => {
@@ -499,17 +504,10 @@ export default function PaidVideoPlayerPage() {
           <div style={S.sub}>{sub}</div>
         </div>
 
-        {!isLocked ? (
-          <button
-            onClick={() => setMode((m) => (m === "preview" ? "full" : "preview"))}
-            style={S.modeBtn}
-            title="Toggle preview/full"
-          >
-            {mode === "preview" ? "Preview" : "Full"}
-          </button>
-        ) : (
-          <span style={{ width: 76 }} />
-        )}
+        {/* ✅ TOP-RIGHT: show Preview only if locked; otherwise Full Access (no toggle) */}
+        <span style={S.modeBtn} title={isLocked ? "Preview only" : "Full access"}>
+          {isLocked ? "Preview" : "Full Access"}
+        </span>
       </div>
 
       <div style={S.playerWrap}>
@@ -760,8 +758,9 @@ const S = {
     background: "rgba(255,255,255,0.10)",
     color: "#fff",
     fontWeight: 900,
-    cursor: "pointer",
-    minWidth: 76,
+    minWidth: 110,
+    textAlign: "center",
+    userSelect: "none",
   },
 
   playerWrap: {
