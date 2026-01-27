@@ -1,14 +1,7 @@
 // src/services/profileApi.js ✅ FULL DROP-IN (Vite Web)
 // Keeps profileFetch behavior + adds profileFetchRaw
-//
-// Requires: ./profileRegistry exports getProfileByKey(profileKey)
-// Profile shape can include:
-// - apiBaseUrl
-// - endpoints.apiBaseUrl
-//
-// Env fallback (Vite):
-// - import.meta.env.VITE_API_BASE_URL
-// - import.meta.env.VITE_EXPO_PUBLIC_API_BASE_URL (optional compatibility)
+// ✅ FIX: Automatically attaches buyer auth headers (Authorization + x-user-id) when present
+// ✅ FIX: Adds credentials:'include' (safe default)
 
 import { getProfileByKey } from './profileRegistry.js';
 
@@ -20,14 +13,59 @@ function cleanBase(url) {
   return String(url || '').trim().replace(/\/+$/, '');
 }
 
+function readBuyerToken() {
+  try {
+    return String(localStorage.getItem('buyerToken') || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function readBuyerUserId() {
+  try {
+    // your storage key already exists
+    const direct = String(localStorage.getItem('buyerUserId_v1') || '').trim();
+    if (direct) return direct;
+
+    // fallback: try to decode from JWT "sub"
+    const token = readBuyerToken();
+    if (!token) return '';
+    const parts = token.split('.');
+    if (parts.length < 2) return '';
+
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+    const json = atob(b64 + pad);
+    const payload = JSON.parse(json);
+
+    return String(payload?.userId || payload?.id || payload?._id || payload?.sub || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function normalizeHeaders(h) {
+  // supports plain object OR Headers instance
+  try {
+    if (!h) return {};
+    if (h instanceof Headers) {
+      const out = {};
+      h.forEach((v, k) => (out[k] = v));
+      return out;
+    }
+    if (typeof h === 'object') return { ...h };
+    return {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Resolve API base URL for a profile.
  * Supports:
  * - profile.apiBaseUrl
  * - profile.endpoints.apiBaseUrl
  * - fallback env
- *
- * NOTE: requires profileKey (no silent lamont fallback)
  */
 export function getApiBaseUrl(profileKey) {
   const pk = normProfileKey(profileKey);
@@ -47,9 +85,9 @@ export function getApiBaseUrl(profileKey) {
  * ✅ RAW fetch (returns native Response)
  * Always includes:
  * - x-profile-key
- *
- * Use this when you want:
- * - res.ok / res.status / res.json()
+ * If buyer is logged in, also includes:
+ * - Authorization: Bearer <buyerToken>
+ * - x-user-id: <buyerUserId>
  */
 export async function profileFetchRaw(profileKey, path, options = {}) {
   const pk = normProfileKey(profileKey);
@@ -61,25 +99,33 @@ export async function profileFetchRaw(profileKey, path, options = {}) {
   const urlPath = String(path || '').startsWith('/') ? path : `/${path}`;
   const url = `${base}${urlPath}`;
 
-  console.log('🌐 [profileFetchRaw] base=', base, 'url=', url, 'profileKey=', pk);
+  const token = readBuyerToken();
+  const buyerUserId = readBuyerUserId();
+
+  const inHeaders = normalizeHeaders(options.headers);
 
   const headers = {
-    ...(options.headers || {}),
+    ...inHeaders,
     'x-profile-key': pk,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(buyerUserId ? { 'x-user-id': buyerUserId } : {}),
   };
 
-  return fetch(url, { ...options, headers });
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: options.credentials || 'include',
+  });
 }
 
 /**
  * PUBLIC fetch that always includes:
  * - x-profile-key
+ * + buyer auth headers when present
  *
  * Returns normalized response object:
  * - { ok:true, ...data } for JSON
  * - { ok:false, status, error, raw } for errors
- *
- * ✅ Keep this for existing screens so nothing breaks.
  */
 export async function profileFetch(profileKey, path, options = {}) {
   const pk = normProfileKey(profileKey);
@@ -95,16 +141,25 @@ export async function profileFetch(profileKey, path, options = {}) {
   const urlPath = String(path || '').startsWith('/') ? path : `/${path}`;
   const url = `${base}${urlPath}`;
 
-  console.log('🌐 [profileFetch] base=', base, 'url=', url, 'profileKey=', pk);
+  const token = readBuyerToken();
+  const buyerUserId = readBuyerUserId();
+
+  const inHeaders = normalizeHeaders(options.headers);
 
   const headers = {
-    ...(options.headers || {}),
+    ...inHeaders,
     'x-profile-key': pk,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(buyerUserId ? { 'x-user-id': buyerUserId } : {}),
   };
 
   let res;
   try {
-    res = await fetch(url, { ...options, headers });
+    res = await fetch(url, {
+      ...options,
+      headers,
+      credentials: options.credentials || 'include',
+    });
   } catch (e) {
     return { ok: false, error: e?.message || 'Network error' };
   }
