@@ -170,7 +170,9 @@ export default function OwnerHomePage() {
     "fashion",
     "videos",
     "flowerorders",
+    "paid-videos",
   ]);
+
 
   const handleTilePress = (tile) => {
     if (!profileKey) return;
