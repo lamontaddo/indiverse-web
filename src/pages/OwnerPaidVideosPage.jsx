@@ -18,39 +18,25 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { ownerFetch } from "../services/ownerApi";
+import { apiJson } from "../utils/apiClient";
 import { getProfileByKey } from "../services/profileRegistry";
 import { getActiveProfileKey } from "../config/apiBase";
 
 /* ------------------------------ ownerJson ------------------------------ */
 async function ownerJson(path, { method = "GET", profileKey, body, headers } = {}) {
-  const res = await ownerFetch(profileKey, path, {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(headers || {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-
-  // some of your helpers return arrays directly
-  if (Array.isArray(res)) return res;
-
-  // if it’s not normalized, treat as data
-  if (res && typeof res === "object") {
-    const hasNormalizedKeys = "ok" in res || "status" in res || "error" in res;
-    if (!hasNormalizedKeys) return res;
+    const res = await apiJson(path, {
+      method,
+      headers: {
+        ...(profileKey ? { "x-profile-key": profileKey } : {}),
+        ...(headers || {}),
+      },
+      ...(body !== undefined ? { body } : {}),
+    });
+  
+    // If your apiJson already returns plain data, just return it.
+    return res;
   }
-
-  if (!res || res.ok !== true) {
-    const msg =
-      res?.error || res?.message || (res?.status ? `Request failed (${res.status})` : "Request failed");
-    throw new Error(msg);
-  }
-
-  return res.data !== undefined ? res.data : res;
-}
+  
 
 /* ------------------------------ helpers ------------------------------ */
 function dollarsFromCents(cents) {
