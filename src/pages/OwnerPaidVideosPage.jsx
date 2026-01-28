@@ -26,6 +26,7 @@ import { getActiveProfileKey } from "../config/apiBase";
 async function ownerJson(path, { method = "GET", profileKey, body, headers } = {}) {
     const res = await apiJson(path, {
       method,
+      credentials: "include", // ✅ REQUIRED for owner cookie/session
       headers: {
         ...(profileKey ? { "x-profile-key": profileKey } : {}),
         ...(headers || {}),
@@ -33,9 +34,9 @@ async function ownerJson(path, { method = "GET", profileKey, body, headers } = {
       ...(body !== undefined ? { body } : {}),
     });
   
-    // If your apiJson already returns plain data, just return it.
     return res;
   }
+  
   
 
 /* ------------------------------ helpers ------------------------------ */
