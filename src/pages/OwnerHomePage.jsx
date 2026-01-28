@@ -154,6 +154,7 @@ export default function OwnerHomePage() {
     // ✅ ALIASES -> /owner/flowerorders
     ownerflowerorders: "flowerorders",
     ownerconsultation: "flowerorders",
+    ownerpaidvideos: "paid-videos",
   };
 
   // ✅ allow-list for navigation
