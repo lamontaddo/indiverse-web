@@ -18,23 +18,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { apiJson } from "../utils/apiClient";
+import { ownerJsonWeb } from "../utils/ownerApi.web";
+
 import { getProfileByKey } from "../services/profileRegistry";
 import { getActiveProfileKey } from "../config/apiBase";
 
 /* ------------------------------ ownerJson ------------------------------ */
 async function ownerJson(path, { method = "GET", profileKey, body, headers } = {}) {
-    const res = await apiJson(path, {
+    return await ownerJsonWeb(path, {
       method,
-      credentials: "include", // ✅ REQUIRED for owner cookie/session
-      headers: {
-        ...(profileKey ? { "x-profile-key": profileKey } : {}),
-        ...(headers || {}),
-      },
-      ...(body !== undefined ? { body } : {}),
+      profileKey,
+      headers,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-  
-    return res;
   }
   
   
