@@ -7,6 +7,8 @@
 // ✅ Comments drawer + safe fallbacks if endpoints don’t exist
 // ✅ TOP-RIGHT LABEL FIX: shows "Preview" only when locked, otherwise "Full Access" (no toggle)
 // ✅ Auto-switches mode to full when owned (paid + purchased) or free
+//
+// ✅ FIX: sends title/currency/priceCents to /api/checkout/session (prevents Invalid priceCents)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -86,7 +88,15 @@ function moneyFromCents(cents, currency = "usd") {
 }
 
 // ✅ uses your existing checkout route (same one MusicPage uses)
-async function createVideoCheckoutSession({ profileKey, videoId, token = "", buyerUserId = "" }) {
+async function createVideoCheckoutSession({
+  profileKey,
+  videoId,
+  token = "",
+  buyerUserId = "",
+  title = "Purchase",
+  currency = "usd",
+  priceCents = 0,
+}) {
   const headers = {
     "Content-Type": "application/json",
     "x-profile-key": String(profileKey || ""),
@@ -97,7 +107,13 @@ async function createVideoCheckoutSession({ profileKey, videoId, token = "", buy
   const res = await profileFetchRaw(profileKey, `/api/checkout/session`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ itemType: "video", videoId: String(videoId) }),
+    body: JSON.stringify({
+      itemType: "video",
+      videoId: String(videoId),
+      title: String(title || "Purchase"),
+      currency: String(currency || "usd").toLowerCase(),
+      priceCents: Number(priceCents || 0),
+    }),
   });
 
   const data = await readJsonSafe(res);
@@ -304,11 +320,18 @@ export default function PaidVideoPlayerPage() {
       setCheckoutBusy(true);
       setCheckoutErr(null);
 
+      const effectiveTitle = cleanStr(videoMeta?.title) || "Purchase";
+      const effectiveCurrency = String(videoMeta?.currency || "usd").toLowerCase();
+      const effectivePriceCents = Number(videoMeta?.priceCents || 0);
+
       const url = await createVideoCheckoutSession({
         profileKey,
         videoId,
         token,
         buyerUserId: buyerUserId || "",
+        title: effectiveTitle,
+        currency: effectiveCurrency,
+        priceCents: effectivePriceCents,
       });
 
       window.location.href = url;
@@ -317,7 +340,7 @@ export default function PaidVideoPlayerPage() {
     } finally {
       setCheckoutBusy(false);
     }
-  }, [buyerUserId, checkoutBusy, ensureAuthed, profileKey, token, videoId]);
+  }, [buyerUserId, checkoutBusy, ensureAuthed, profileKey, token, videoId, videoMeta]);
 
   // enforce 30s preview client-side -> pause + show purchase box
   const onTimeUpdate = useCallback(() => {
