@@ -157,6 +157,8 @@ function decodeJwtUserId(jwtToken) {
   return null;
 }
 
+
+
 export default function PaidVideoPlayerPage() {
   const nav = useNavigate();
   const params = useParams();
@@ -188,6 +190,44 @@ export default function PaidVideoPlayerPage() {
   const isAuthed = !!token;
   const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
 
+  const loadEngagement = useCallback(async () => {
+    if (!videoId) return;
+  
+    try {
+      console.log("[ENG] loadEngagement start", { profileKey, videoId, hasToken: !!token, buyerUserId });
+  
+      const headers = {
+        "Content-Type": "application/json",
+        "x-profile-key": String(profileKey || ""),
+      };
+      if (token) headers.Authorization = `Bearer ${String(token)}`;
+      if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+      // optional but nice:
+      // headers["x-username"] = "Web";
+  
+      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/engagement`, {
+        method: "GET",
+        headers,
+      });
+  
+      const data = await readJsonSafe(res);
+      console.log("[ENG] loadEngagement response", { ok: res.ok, status: res.status, data });
+  
+      if (!res.ok) {
+        // do not throw; keep UI stable
+        return;
+      }
+  
+      setLikeCount(Number(data?.likeCount || 0));
+      setCommentCount(Number(data?.commentCount || 0));
+      setLiked(!!data?.myLike);
+      setComments(Array.isArray(data?.comments) ? data.comments : []);
+    } catch (e) {
+      console.log("[ENG] loadEngagement error", e?.message || e);
+    }
+  }, [videoId, profileKey, token, buyerUserId]);
+  
+
   useEffect(() => {
     const syncToken = () => setToken(localStorage.getItem("buyerToken") || "");
     window.addEventListener("focus", syncToken);
@@ -206,6 +246,11 @@ export default function PaidVideoPlayerPage() {
     if (isLocked && mode !== "preview") setMode("preview");
     if (!isLocked && mode !== "full") setMode("full");
   }, [isLocked, mode]);
+
+  useEffect(() => {
+    loadEngagement();
+  }, [loadEngagement]);
+  
 
   // --- purchase box state ---
   const [purchaseOpen, setPurchaseOpen] = useState(false);
@@ -312,6 +357,16 @@ export default function PaidVideoPlayerPage() {
     return false;
   }, [isAuthed, token, nav, profileKey, videoId, videoMeta]);
 
+
+  const requireLoginToast = useCallback((msg = "Please sign in first.") => {
+    console.log("[AUTH] blocked action:", msg, { hasToken: !!token, buyerUserId });
+    setErr(msg);
+    setTimeout(() => setErr(null), 1400);
+  }, [token, buyerUserId]);
+  
+  const canInteract = !!buyerUserId; // string id OR mongo id — both fine now
+  
+
   const startCheckout = useCallback(async () => {
     if (!videoId || checkoutBusy) return;
     if (!ensureAuthed()) return;
@@ -379,28 +434,71 @@ export default function PaidVideoPlayerPage() {
   const sub = access === "paid" && isLocked ? "Preview only" : "FULL ACCESS";
 
   // Like
-  const toggleLike = useCallback(async () => {
+// ✅ Like (server truth) — sends auth + profile headers + debug logs ✅ FULL DROP-IN
+const toggleLike = useCallback(async () => {
     if (!videoId) return;
-
+  
+    // must have user id to pass mustUser()
+    if (!buyerUserId) {
+      console.log("[LIKE] blocked: missing buyerUserId", { hasToken: !!token, buyerUserId });
+      setErr("Please sign in to like.");
+      setTimeout(() => setErr(null), 1400);
+      return;
+    }
+  
+    const url = `/api/paid-videos/${encodeURIComponent(videoId)}/like`;
+  
+    // optimistic UI (fast), but we will reconcile to server response
     const nextLiked = !liked;
     setLiked(nextLiked);
     setLikeCount((c) => Math.max(0, Number(c || 0) + (nextLiked ? 1 : -1)));
-
+  
     try {
-      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/like`, {
+      const headers = {
+        "Content-Type": "application/json",
+        "x-profile-key": String(profileKey || ""),
+        "x-user-id": String(buyerUserId || ""),
+      };
+      if (token) headers.Authorization = `Bearer ${String(token)}`;
+  
+      console.log("[LIKE] start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, optimistic: nextLiked });
+  
+      const res = await profileFetchRaw(profileKey, url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "toggle" }),
+        headers,
+        body: JSON.stringify({ action: "toggle" }), // harmless; backend ignores it
       });
+  
       const data = await readJsonSafe(res);
-      if (!res.ok) return;
-
-      const payload = (data && data.data) || data || {};
-      if (typeof payload.liked === "boolean") setLiked(payload.liked);
-      if (payload.likeCount != null) setLikeCount(Number(payload.likeCount) || 0);
-      if (payload.count != null) setLikeCount(Number(payload.count) || 0);
-    } catch {}
-  }, [liked, profileKey, videoId]);
+  
+      console.log("[LIKE] response", { ok: res.ok, status: res.status, data });
+  
+      if (!res.ok) {
+        // rollback optimistic change
+        setLiked(!nextLiked);
+        setLikeCount((c) => Math.max(0, Number(c || 0) + (nextLiked ? -1 : 1)));
+  
+        const msg = (data && (data.error || data.message)) || "Like failed.";
+        setErr(msg);
+        setTimeout(() => setErr(null), 1400);
+        return;
+      }
+  
+      // server truth
+      if (typeof data?.liked === "boolean") setLiked(!!data.liked);
+      if (data?.likeCount != null) setLikeCount(Number(data.likeCount) || 0);
+    } catch (e) {
+      console.log("[LIKE] error", e?.message || e);
+  
+      // rollback optimistic change
+      setLiked(!nextLiked);
+      setLikeCount((c) => Math.max(0, Number(c || 0) + (nextLiked ? -1 : 1)));
+  
+      setErr("Like failed.");
+      setTimeout(() => setErr(null), 1400);
+    }
+  }, [videoId, buyerUserId, token, profileKey, liked]);
+  
 
   // Share
   const share = useCallback(async () => {
@@ -423,82 +521,135 @@ export default function PaidVideoPlayerPage() {
     }
   }, [title]);
 
-  // Comments
-  const loadComments = useCallback(async () => {
+
+const loadComments = useCallback(async () => {
     if (!videoId) return;
+  
+    if (!canInteract) {
+      console.log("[COMMENTS] skip load: not signed in");
+      setComments([]);
+      setCommentsErr("Sign in to view and post comments.");
+      return;
+    }
+  
+    const url = `/api/paid-videos/${encodeURIComponent(videoId)}/engagement`;
+  
     try {
       setCommentsLoading(true);
       setCommentsErr(null);
-
-      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/comments`);
+  
+      const headers = {
+        "Content-Type": "application/json",
+        "x-profile-key": String(profileKey || ""),
+      };
+      if (token) headers.Authorization = `Bearer ${String(token)}`;
+      if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+  
+      console.log("[COMMENTS] load start", { profileKey, videoId, url, hasToken: !!token, buyerUserId });
+  
+      const res = await profileFetchRaw(profileKey, url, {
+        method: "GET",
+        headers,
+      });
+  
       const data = await readJsonSafe(res);
-
+  
+      console.log("[COMMENTS] load response", {
+        ok: res.ok,
+        status: res.status,
+        data,
+      });
+  
       if (!res.ok) {
         setComments([]);
-        setCommentsErr("Comments aren’t available yet for this video.");
+        setCommentsErr((data && (data.error || data.message)) || "Comments aren’t available yet for this video.");
         return;
       }
-
-      const list =
-        (Array.isArray(data) && data) ||
-        data?.comments ||
-        data?.items ||
-        data?.rows ||
-        data?.data ||
-        [];
-
-      setComments(Array.isArray(list) ? list : []);
-      if (data?.commentCount != null) setCommentCount(Number(data.commentCount) || 0);
-      else setCommentCount((c) => Math.max(Number(c || 0), Array.isArray(list) ? list.length : 0));
-    } catch {
+  
+      const list = Array.isArray(data?.comments) ? data.comments : [];
+      setComments(list);
+  
+      // backend source of truth
+      setCommentCount(Number(data?.commentCount || 0));
+    } catch (e) {
+      console.log("[COMMENTS] load error", e?.message || e);
       setComments([]);
       setCommentsErr("Unable to load comments.");
     } finally {
       setCommentsLoading(false);
     }
-  }, [profileKey, videoId]);
+  }, [profileKey, videoId, token, buyerUserId, canInteract]);
+  
 
   useEffect(() => {
     if (!commentsOpen) return;
     loadComments();
   }, [commentsOpen, loadComments]);
 
-  const postComment = useCallback(async () => {
+// ✅ FULL DROP-IN: postComment (auth headers + logs + safe UI)
+const postComment = useCallback(async () => {
     const text = cleanStr(commentText);
     if (!text || postingComment) return;
-
+    if (!videoId) return;
+  
+    // must have buyerUserId for backend mustUser()
+    if (!buyerUserId) {
+      console.log("[COMMENTS] post blocked: missing buyerUserId", { hasToken: !!token, buyerUserId });
+      setCommentsErr("Please sign in to comment.");
+      return;
+    }
+  
     setPostingComment(true);
     setCommentsErr(null);
-
+  
+    const url = `/api/paid-videos/${encodeURIComponent(videoId)}/comments`;
+  
     try {
-      const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/comments`, {
+      const headers = {
+        "Content-Type": "application/json",
+        "x-profile-key": String(profileKey || ""),
+        "x-user-id": String(buyerUserId || ""),
+        // optional but nice for display:
+      
+      };
+      if (token) headers.Authorization = `Bearer ${String(token)}`;
+  
+      console.log("[COMMENTS] post start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, textLen: text.length });
+  
+      const res = await profileFetchRaw(profileKey, url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ text }),
       });
+  
       const data = await readJsonSafe(res);
-
+  
+      console.log("[COMMENTS] post response", { ok: res.ok, status: res.status, data });
+  
       if (!res.ok) {
         setCommentsErr((data && (data.error || data.message)) || "Unable to post comment.");
         return;
       }
-
-      const created = data?.comment || data?.item || data?.data || null;
+  
+      const created = data?.comment || null;
+  
       if (created && typeof created === "object") {
         setComments((prev) => [created, ...(prev || [])]);
-        setCommentCount((c) => Number(c || 0) + 1);
+        setCommentCount(Number(data?.commentCount || 0));
       } else {
+        // fallback: reload list via engagement
         await loadComments();
       }
-
+  
       setCommentText("");
-    } catch {
+    } catch (e) {
+      console.log("[COMMENTS] post error", e?.message || e);
       setCommentsErr("Unable to post comment.");
     } finally {
       setPostingComment(false);
     }
-  }, [commentText, loadComments, postingComment, profileKey, videoId]);
-
+  }, [commentText, postingComment, videoId, buyerUserId, token, profileKey, loadComments]);
+  
   // ESC closes comments / purchase
   useEffect(() => {
     const onKey = (e) => {
@@ -574,7 +725,11 @@ export default function PaidVideoPlayerPage() {
           <span style={S.actionCount}>{fmtCount(likeCount)}</span>
         </button>
 
-        <button onClick={() => setCommentsOpen(true)} style={S.actionBtn} title="Comments">
+        <button
+  onClick={() => (canInteract ? setCommentsOpen(true) : requireLoginToast("Please sign in to comment."))}
+  style={S.actionBtn}
+  title={canInteract ? "Comments" : "Sign in to comment"}
+>
           <span style={S.actionIcon}>💬</span>
           <span style={S.actionText}>Comments</span>
           <span style={S.actionCount}>{fmtCount(commentCount)}</span>
@@ -644,78 +799,95 @@ export default function PaidVideoPlayerPage() {
       {isLocked ? <div style={S.lockNote}>Preview is limited to 30 seconds.</div> : null}
 
       {/* Comments Drawer */}
-      {commentsOpen ? (
-        <div style={S.drawerOverlay} onMouseDown={() => setCommentsOpen(false)}>
-          <div style={S.drawer} onMouseDown={(e) => e.stopPropagation()}>
-            <div style={S.drawerHeader}>
-              <div style={{ minWidth: 0 }}>
-                <div style={S.drawerTitle}>Comments</div>
-                <div style={S.drawerSub} title={title}>
-                  {title}
-                </div>
-              </div>
-              <button onClick={() => setCommentsOpen(false)} style={S.drawerClose} aria-label="Close comments">
-                ✕
-              </button>
-            </div>
-
-            <div style={S.drawerComposer}>
-              <textarea
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                placeholder="Write a comment…"
-                style={S.textarea}
-                rows={3}
-              />
-              <div style={S.drawerComposerRow}>
-                <button
-                  onClick={postComment}
-                  style={{ ...S.postBtn, ...(postingComment ? S.postBtnDisabled : {}) }}
-                  disabled={postingComment || !cleanStr(commentText)}
-                >
-                  {postingComment ? "Posting…" : "Post"}
-                </button>
-              </div>
-              {commentsErr ? <div style={S.commentsErr}>{commentsErr}</div> : null}
-            </div>
-
-            <div style={S.drawerBody}>
-              {commentsLoading ? (
-                <div style={{ ...S.centerText, padding: 12 }}>Loading comments…</div>
-              ) : comments?.length ? (
-                <div style={S.commentList}>
-                  {comments.map((c, i) => {
-                    const id = String(c?._id || c?.id || i);
-                    const name = cleanStr(c?.userName || c?.name || c?.author || "User");
-                    const text = cleanStr(c?.text || c?.body || c?.message || "");
-                    const when = cleanStr(c?.createdAt || c?.created_at || "");
-                    return (
-                      <div key={id} style={S.commentCard}>
-                        <div style={S.commentTop}>
-                          <div style={S.commentName} title={name}>
-                            {name}
-                          </div>
-                          {when ? <div style={S.commentWhen}>{when}</div> : null}
-                        </div>
-                        <div style={S.commentText}>{text || "…"}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div style={{ ...S.centerText, padding: 12 }}>No comments yet.</div>
-              )}
-            </div>
-
-            <div style={S.drawerFooter}>
-              <button onClick={loadComments} style={S.drawerReload}>
-                Refresh
-              </button>
-              <div style={S.drawerHint}>Press Esc to close</div>
-            </div>
+{commentsOpen ? (
+  <div style={S.drawerOverlay} onMouseDown={() => setCommentsOpen(false)}>
+    <div style={S.drawer} onMouseDown={(e) => e.stopPropagation()}>
+      <div style={S.drawerHeader}>
+        <div style={{ minWidth: 0 }}>
+          <div style={S.drawerTitle}>Comments</div>
+          <div style={S.drawerSub} title={title}>
+            {title}
           </div>
         </div>
-      ) : null}
+        <button onClick={() => setCommentsOpen(false)} style={S.drawerClose} aria-label="Close comments">
+          ✕
+        </button>
+      </div>
+
+      <div style={S.drawerComposer}>
+        {!canInteract ? (
+          <div style={S.commentsErr}>Please sign in to view and post comments.</div>
+        ) : null}
+
+        <textarea
+          value={commentText}
+          onChange={(e) => setCommentText(e.target.value)}
+          placeholder={canInteract ? "Write a comment…" : "Sign in to comment…"}
+          style={{ ...S.textarea, ...(canInteract ? null : { opacity: 0.6, cursor: "not-allowed" }) }}
+          rows={3}
+          disabled={!canInteract}
+        />
+
+        <div style={S.drawerComposerRow}>
+          <button
+            onClick={canInteract ? postComment : () => requireLoginToast("Please sign in to comment.")}
+            style={{
+              ...S.postBtn,
+              ...(postingComment || !cleanStr(commentText) || !canInteract ? S.postBtnDisabled : {}),
+            }}
+            disabled={postingComment || !cleanStr(commentText) || !canInteract}
+          >
+            {postingComment ? "Posting…" : "Post"}
+          </button>
+        </div>
+
+        {commentsErr ? <div style={S.commentsErr}>{commentsErr}</div> : null}
+      </div>
+
+      <div style={S.drawerBody}>
+        {!canInteract ? (
+          <div style={{ ...S.centerText, padding: 12 }}>Sign in to see comments.</div>
+        ) : commentsLoading ? (
+          <div style={{ ...S.centerText, padding: 12 }}>Loading comments…</div>
+        ) : comments?.length ? (
+          <div style={S.commentList}>
+            {comments.map((c, i) => {
+              const id = String(c?._id || c?.id || i);
+              // backend returns username field
+              const name = cleanStr(c?.username || c?.userName || c?.name || c?.author || "User");
+              const text = cleanStr(c?.text || c?.body || c?.message || "");
+              const when = cleanStr(c?.createdAt || c?.created_at || "");
+              return (
+                <div key={id} style={S.commentCard}>
+                  <div style={S.commentTop}>
+                    <div style={S.commentName} title={name}>
+                      {name}
+                    </div>
+                    {when ? <div style={S.commentWhen}>{when}</div> : null}
+                  </div>
+                  <div style={S.commentText}>{text || "…"}</div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ ...S.centerText, padding: 12 }}>No comments yet.</div>
+        )}
+      </div>
+
+      <div style={S.drawerFooter}>
+        <button
+          onClick={canInteract ? loadComments : () => requireLoginToast("Please sign in to view comments.")}
+          style={S.drawerReload}
+        >
+          Refresh
+        </button>
+        <div style={S.drawerHint}>Press Esc to close</div>
+      </div>
+    </div>
+  </div>
+) : null}
+
 
       {/* status line */}
       {err && playUrl ? <div style={S.toast}>{err}</div> : null}
