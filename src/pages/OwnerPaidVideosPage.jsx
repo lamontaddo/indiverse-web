@@ -1,14 +1,16 @@
-// src/pages/OwnerPaidVideosPage.jsx ✅ FULL DROP-IN (WEB)
+// src/pages/OwnerPaidVideosPage.jsx ✅ FULL DROP-IN (WEB) — SAME STANDARD AS APP
 // Route: /world/:profileKey/owner/paid-videos
 //
-// ✅ NOW supports uploading a REAL preview clip:
-// - kind: "preview" -> saves to form.s3KeyPreview -> persisted to Mongo
+// ✅ Supports REAL preview uploads (kind: "preview") -> saves s3KeyPreview
+// ✅ Uses PUT /api/owner/paid-videos/:id for edits (same as app)
+// ✅ Enforces: if access=paid + sourceType=s3 => requires s3KeyPreview before Save/Publish
+// ✅ Thumbnail upload (kind: "thumbnail") + cache-bust
 //
 // Requires:
 // - ownerJsonWeb(path, { method, profileKey, headers, body })
-// - backend: POST /api/owner/paid-videos/sign-upload supports kind: "video" | "preview" | "thumbnail"
-// - backend: POST /api/owner/paid-videos accepts s3KeyPreview
+// - backend: /api/owner/paid-videos/sign-upload supports kind: "video" | "preview" | "thumbnail"
 // - backend: GET /api/owner/paid-videos returns s3KeyPreview
+// - backend: PUT /api/owner/paid-videos/:id exists
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -59,10 +61,13 @@ function badgeText(v) {
 function canPublish(video) {
   const src = String(video?.sourceType || "s3").toLowerCase();
   if (src === "link") return true;
+
   const access = String(video?.access || "free").toLowerCase();
   if (access !== "paid") return true;
-  const n = Number(video?.priceCents || 0);
-  return Number.isFinite(n) && n > 0;
+
+  const priceOk = Number(video?.priceCents || 0) > 0;
+  const previewOk = !!String(video?.s3KeyPreview || "").trim(); // ✅ require preview
+  return priceOk && previewOk;
 }
 
 function validateForm(form) {
@@ -80,17 +85,14 @@ function validateForm(form) {
   }
 
   if (sourceType === "s3") {
-    if (!String(form.s3KeyFull || "").trim())
-      return "Pick a video (or set s3KeyFull) for S3 uploads.";
+    if (!String(form.s3KeyFull || "").trim()) return "Pick a full video (s3KeyFull) for S3 uploads.";
 
-    // ✅ If paid, strongly recommend preview exists (real preview)
     const access = String(form.access || "free").toLowerCase();
     if (access === "paid" && !String(form.s3KeyPreview || "").trim()) {
       return "Paid videos must include a preview clip (upload s3KeyPreview).";
     }
   } else {
-    if (!String(form.externalUrl || "").trim())
-      return "externalUrl is required when sourceType is link.";
+    if (!String(form.externalUrl || "").trim()) return "externalUrl is required when sourceType is link.";
   }
 
   return null;
@@ -127,8 +129,8 @@ export default function OwnerPaidVideosPage() {
   const profileKey = String(params.profileKey || getActiveProfileKey?.() || "")
     .trim()
     .toLowerCase();
-  const profile = useMemo(() => (profileKey ? getProfileByKey(profileKey) : null), [profileKey]);
 
+  const profile = useMemo(() => (profileKey ? getProfileByKey(profileKey) : null), [profileKey]);
   const headerTitle = `${profile?.label || profileKey || "owner"} • Owner Paid Videos`;
 
   const [loading, setLoading] = useState(true);
@@ -249,6 +251,18 @@ export default function OwnerPaidVideosPage() {
     [profileKey]
   );
 
+  const uploadFileToPutUrl = useCallback(async ({ putUrl, file, contentType }) => {
+    const putRes = await fetch(putUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: file,
+    });
+    if (!putRes.ok) {
+      const txt = await putRes.text().catch(() => "");
+      throw new Error(`Upload failed (${putRes.status}) ${txt ? `- ${txt}` : ""}`.trim());
+    }
+  }, []);
+
   const pickAndUploadVideo = useCallback(
     async (file) => {
       if (!profileKey) return alert("Missing profileKey");
@@ -267,31 +281,18 @@ export default function OwnerPaidVideosPage() {
 
         if (!putUrl || !key) throw new Error("Upload signer did not return putUrl/key.");
 
-        const putRes = await fetch(putUrl, {
-          method: "PUT",
-          headers: { "Content-Type": contentType },
-          body: file,
-        });
+        await uploadFileToPutUrl({ putUrl, file, contentType });
 
-        if (!putRes.ok) {
-          const txt = await putRes.text().catch(() => "");
-          throw new Error(`Upload failed (${putRes.status}) ${txt ? `- ${txt}` : ""}`.trim());
-        }
+        setForm((s) => ({ ...s, sourceType: "s3", s3KeyFull: key }));
 
-        setForm((s) => ({
-          ...s,
-          sourceType: "s3",
-          s3KeyFull: key,
-        }));
-
-        alert("Video uploaded. Now upload a preview clip (10–20s), then hit Save.");
+        alert("Full video uploaded. Now upload a preview clip (10–20s), then hit Save.");
       } catch (e) {
         alert(e?.message || "Upload failed");
       } finally {
         setUploadingVideo(false);
       }
     },
-    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload]
+    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload, uploadFileToPutUrl]
   );
 
   const pickAndUploadPreview = useCallback(
@@ -312,22 +313,9 @@ export default function OwnerPaidVideosPage() {
 
         if (!putUrl || !key) throw new Error("Preview signer did not return putUrl/key.");
 
-        const putRes = await fetch(putUrl, {
-          method: "PUT",
-          headers: { "Content-Type": contentType },
-          body: file,
-        });
+        await uploadFileToPutUrl({ putUrl, file, contentType });
 
-        if (!putRes.ok) {
-          const txt = await putRes.text().catch(() => "");
-          throw new Error(`Preview upload failed (${putRes.status}) ${txt ? `- ${txt}` : ""}`.trim());
-        }
-
-        setForm((s) => ({
-          ...s,
-          sourceType: "s3",
-          s3KeyPreview: key,
-        }));
+        setForm((s) => ({ ...s, sourceType: "s3", s3KeyPreview: key }));
 
         alert("Preview uploaded. Now hit Save.");
       } catch (e) {
@@ -336,7 +324,7 @@ export default function OwnerPaidVideosPage() {
         setUploadingPreview(false);
       }
     },
-    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload]
+    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload, uploadFileToPutUrl]
   );
 
   const pickAndUploadThumbnail = useCallback(
@@ -357,16 +345,7 @@ export default function OwnerPaidVideosPage() {
 
         if (!putUrl || !key) throw new Error("Thumbnail signer did not return putUrl/key.");
 
-        const putRes = await fetch(putUrl, {
-          method: "PUT",
-          headers: { "Content-Type": contentType },
-          body: file,
-        });
-
-        if (!putRes.ok) {
-          const txt = await putRes.text().catch(() => "");
-          throw new Error(`Thumbnail upload failed (${putRes.status}) ${txt ? `- ${txt}` : ""}`.trim());
-        }
+        await uploadFileToPutUrl({ putUrl, file, contentType });
 
         const signedGet = String(signed?.getUrl || signed?.getThumbUrl || signed?.thumbnailUrl || "").trim();
         const localPreview = URL.createObjectURL(file);
@@ -384,7 +363,7 @@ export default function OwnerPaidVideosPage() {
         setUploadingThumb(false);
       }
     },
-    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload]
+    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload, uploadFileToPutUrl]
   );
 
   /* ------------------------------ CRUD ------------------------------ */
@@ -424,13 +403,10 @@ export default function OwnerPaidVideosPage() {
       isPublished: !!form.isPublished,
     };
 
-    if (
-      payload.isPublished &&
-      payload.sourceType !== "link" &&
-      payload.access === "paid" &&
-      !(Number(payload.priceCents) > 0)
-    ) {
-      return alert("Paid videos must have a price before publishing.");
+    // local guardrails (server also enforces)
+    if (payload.isPublished && payload.sourceType === "s3" && payload.access === "paid") {
+      if (!(Number(payload.priceCents) > 0)) return alert("Paid videos must have a price before publishing.");
+      if (!String(payload.s3KeyPreview || "").trim()) return alert("Paid videos must include a preview clip before publishing.");
     }
 
     setSaving(true);
@@ -475,7 +451,10 @@ export default function OwnerPaidVideosPage() {
 
   async function togglePublish(v) {
     const next = !v.isPublished;
-    if (next && !canPublish(v)) return alert("Set a price first (paid videos require price > 0).");
+
+    if (next && !canPublish(v)) {
+      return alert("Cannot publish: paid S3 videos require price > 0 AND a preview clip.");
+    }
 
     try {
       await ownerJson(`/api/owner/paid-videos/${v._id}/publish`, {
@@ -547,7 +526,11 @@ export default function OwnerPaidVideosPage() {
                   <button key={v._id} style={S.cardBtn} onClick={() => openEdit(v)}>
                     <div style={S.card}>
                       <div style={S.thumbWrap}>
-                        {thumb ? <img src={thumb} alt="" style={S.thumb} /> : <div style={{ ...S.thumb, ...S.thumbFallback }}>🎬</div>}
+                        {thumb ? (
+                          <img src={thumb} alt="" style={S.thumb} />
+                        ) : (
+                          <div style={{ ...S.thumb, ...S.thumbFallback }}>🎬</div>
+                        )}
                         {isPaid && <div style={S.lockPill}>PAID</div>}
                         {!v.isPublished && <div style={S.draftPill}>DRAFT</div>}
                       </div>
@@ -734,7 +717,14 @@ export default function OwnerPaidVideosPage() {
                 <>
                   {/* FULL VIDEO */}
                   <div style={{ ...S.sectionRow, marginTop: 10 }}>
-                    <label style={{ ...S.primaryBtn, flex: 1, cursor: saveDisabled ? "not-allowed" : "pointer", opacity: saveDisabled ? 0.65 : 1 }}>
+                    <label
+                      style={{
+                        ...S.primaryBtn,
+                        flex: 1,
+                        cursor: saveDisabled ? "not-allowed" : "pointer",
+                        opacity: saveDisabled ? 0.65 : 1,
+                      }}
+                    >
                       <input
                         type="file"
                         accept="video/*"
@@ -742,11 +732,11 @@ export default function OwnerPaidVideosPage() {
                         style={{ display: "none" }}
                         onChange={(e) => pickAndUploadVideo(e.target.files?.[0] || null)}
                       />
-                      {uploadingVideo ? "Uploading…" : "Pick video from computer"}
+                      {uploadingVideo ? "Uploading…" : "Pick full video"}
                     </label>
                   </div>
 
-                  {uploadingVideo ? <div style={S.hint}>Uploading video to S3…</div> : null}
+                  {uploadingVideo ? <div style={S.hint}>Uploading full video to S3…</div> : null}
 
                   <label style={S.label}>s3KeyFull</label>
                   <input
@@ -760,7 +750,14 @@ export default function OwnerPaidVideosPage() {
 
                   {/* PREVIEW VIDEO */}
                   <div style={{ ...S.sectionRow, marginTop: 10 }}>
-                    <label style={{ ...S.primaryBtn, flex: 1, cursor: saveDisabled ? "not-allowed" : "pointer", opacity: saveDisabled ? 0.65 : 1 }}>
+                    <label
+                      style={{
+                        ...S.primaryBtn,
+                        flex: 1,
+                        cursor: saveDisabled ? "not-allowed" : "pointer",
+                        opacity: saveDisabled ? 0.65 : 1,
+                      }}
+                    >
                       <input
                         type="file"
                         accept="video/*"
@@ -799,8 +796,8 @@ export default function OwnerPaidVideosPage() {
                 </>
               )}
 
+              {/* THUMB */}
               <label style={S.label}>Thumbnail</label>
-
               {form.thumbnailUrl ? (
                 <img src={form.thumbnailUrl} alt="" style={S.thumbPreview} />
               ) : (
@@ -808,7 +805,14 @@ export default function OwnerPaidVideosPage() {
               )}
 
               <div style={{ ...S.sectionRow, marginTop: 10 }}>
-                <label style={{ ...S.primaryBtn, flex: 1, cursor: saveDisabled ? "not-allowed" : "pointer", opacity: saveDisabled ? 0.65 : 1 }}>
+                <label
+                  style={{
+                    ...S.primaryBtn,
+                    flex: 1,
+                    cursor: saveDisabled ? "not-allowed" : "pointer",
+                    opacity: saveDisabled ? 0.65 : 1,
+                  }}
+                >
                   <input
                     type="file"
                     accept="image/*"
@@ -816,26 +820,37 @@ export default function OwnerPaidVideosPage() {
                     style={{ display: "none" }}
                     onChange={(e) => pickAndUploadThumbnail(e.target.files?.[0] || null)}
                   />
-                  {uploadingThumb ? "Uploading…" : "Pick thumbnail from computer"}
+                  {uploadingThumb ? "Uploading…" : "Pick thumbnail"}
                 </label>
               </div>
 
               <div style={S.hint}>If empty, fallback thumbnail is shown until auto-generated.</div>
 
+              {/* Publish toggle */}
               <div style={S.sectionRow}>
                 <button
                   type="button"
                   onClick={() => {
                     const next = !form.isPublished;
                     const isLinkNow = String(form.sourceType || "s3").toLowerCase() === "link";
-                    if (!isLinkNow && next && form.access === "paid" && !(parseDollarsToCents(form.priceDollars) > 0)) {
-                      alert("Paid videos must have a price before publishing.");
-                      return;
+                    if (!isLinkNow && next && form.access === "paid") {
+                      if (!(parseDollarsToCents(form.priceDollars) > 0)) {
+                        alert("Paid videos must have a price before publishing.");
+                        return;
+                      }
+                      if (!String(form.s3KeyPreview || "").trim()) {
+                        alert("Paid videos must include a preview clip before publishing.");
+                        return;
+                      }
                     }
                     setForm((s) => ({ ...s, isPublished: next }));
                   }}
                   disabled={uploadingVideo || uploadingPreview || uploadingThumb}
-                  style={{ ...S.choice, ...(form.isPublished ? S.choiceOn : {}), ...(uploadingVideo || uploadingPreview || uploadingThumb ? { opacity: 0.65 } : {}) }}
+                  style={{
+                    ...S.choice,
+                    ...(form.isPublished ? S.choiceOn : {}),
+                    ...(uploadingVideo || uploadingPreview || uploadingThumb ? { opacity: 0.65 } : {}),
+                  }}
                 >
                   {form.isPublished ? "Published" : "Draft"}
                 </button>
@@ -865,22 +880,76 @@ const S = {
     borderBottom: "1px solid #1f1f1f",
     background: "#0b0b0b",
   },
-  backBtn: { padding: "8px 10px", borderRadius: 12, background: "#161616", color: "#fff", fontWeight: 900, border: "1px solid #222" },
+  backBtn: {
+    padding: "8px 10px",
+    borderRadius: 12,
+    background: "#161616",
+    color: "#fff",
+    fontWeight: 900,
+    border: "1px solid #222",
+    cursor: "pointer",
+  },
   headerCenter: { flex: 1, display: "flex", justifyContent: "center" },
-  headerTitle: { textAlign: "center", fontWeight: 900, fontSize: 14, opacity: 0.95, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  addBtn: { padding: "8px 10px", borderRadius: 12, background: "#1b1b1b", color: "#fff", fontWeight: 900, border: "1px solid #222" },
+  headerTitle: {
+    textAlign: "center",
+    fontWeight: 900,
+    fontSize: 14,
+    opacity: 0.95,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  addBtn: {
+    padding: "8px 10px",
+    borderRadius: 12,
+    background: "#1b1b1b",
+    color: "#fff",
+    fontWeight: 900,
+    border: "1px solid #222",
+    cursor: "pointer",
+  },
 
   toolbar: { padding: 14, display: "flex", justifyContent: "flex-end" },
-  pillBtn: { padding: "9px 12px", borderRadius: 999, background: "#1b1b1b", border: "1px solid #2a2a2a", color: "#fff", fontWeight: 800 },
+  pillBtn: {
+    padding: "9px 12px",
+    borderRadius: 999,
+    background: "#1b1b1b",
+    border: "1px solid #2a2a2a",
+    color: "#fff",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
 
-  center: { minHeight: "55vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 },
+  center: {
+    minHeight: "55vh",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
   centerText: { color: "#bbb", fontWeight: 800 },
-  spinner: { width: 18, height: 18, border: "2px solid #333", borderTopColor: "#fff", borderRadius: 999, animation: "spin 0.9s linear infinite" },
+  spinner: {
+    width: 18,
+    height: 18,
+    border: "2px solid #333",
+    borderTopColor: "#fff",
+    borderRadius: 999,
+    animation: "spin 0.9s linear infinite",
+  },
 
   empty: { padding: 22, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 },
   emptyTitle: { fontSize: 18, fontWeight: 800 },
   emptySub: { color: "#aaa", textAlign: "center", maxWidth: 520 },
-  primaryBtn: { padding: "12px 16px", borderRadius: 14, background: "#1c1c1c", color: "#fff", fontWeight: 800, border: "1px solid #222" },
+  primaryBtn: {
+    padding: "12px 16px",
+    borderRadius: 14,
+    background: "#1c1c1c",
+    color: "#fff",
+    fontWeight: 800,
+    border: "1px solid #222",
+    textAlign: "center",
+  },
 
   list: { padding: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 },
 
@@ -919,7 +988,7 @@ const S = {
   sub: { color: "#9b9b9b", marginTop: 4, marginBottom: 10, fontWeight: 700 },
 
   row: { display: "flex", flexWrap: "wrap", gap: 8 },
-  pill: { padding: "9px 12px", borderRadius: 999, background: "#1b1b1b", border: "1px solid #2a2a2a", color: "#fff", fontWeight: 800 },
+  pill: { padding: "9px 12px", borderRadius: 999, background: "#1b1b1b", border: "1px solid #2a2a2a", color: "#fff", fontWeight: 800, cursor: "pointer" },
   pillOn: { background: "#0f2a17", border: "1px solid #1e4f2e" },
   pillOff: { background: "#1b1b1b" },
   pillDanger: { background: "#2b1212", border: "1px solid #4b1d1d" },
@@ -939,12 +1008,39 @@ const S = {
     cursor: "pointer",
   },
 
-  modalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.62)", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: 16, overflow: "auto", zIndex: 80 },
-  modalCard: { width: "min(760px, 100%)", marginTop: 16, background: "#0b0b0b", border: "1px solid #1f1f1f", borderRadius: 18, overflow: "hidden" },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.62)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "flex-start",
+    padding: 16,
+    overflow: "auto",
+    zIndex: 80,
+  },
+  modalCard: {
+    width: "min(760px, 100%)",
+    marginTop: 16,
+    background: "#0b0b0b",
+    border: "1px solid #1f1f1f",
+    borderRadius: 18,
+    overflow: "hidden",
+  },
 
-  modalHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottom: "1px solid #1f1f1f", background: "#0b0b0b", position: "sticky", top: 0, zIndex: 2 },
+  modalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 14,
+    borderBottom: "1px solid #1f1f1f",
+    background: "#0b0b0b",
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+  },
   modalTitle: { fontWeight: 900, fontSize: 16 },
-  modalHeaderBtn: { padding: "8px 10px", borderRadius: 12, background: "#161616", color: "#fff", fontWeight: 900, border: "1px solid #222" },
+  modalHeaderBtn: { padding: "8px 10px", borderRadius: 12, background: "#161616", color: "#fff", fontWeight: 900, border: "1px solid #222", cursor: "pointer" },
   modalSaveBtn: { background: "#132317" },
 
   modalContent: { padding: 14 },
