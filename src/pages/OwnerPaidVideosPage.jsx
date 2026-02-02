@@ -1,39 +1,31 @@
 // src/pages/OwnerPaidVideosPage.jsx ✅ FULL DROP-IN (WEB)
-// Route: /world/:profileKey/owner/paid-videos  (example)
+// Route: /world/:profileKey/owner/paid-videos
+//
+// ✅ NOW supports uploading a REAL preview clip:
+// - kind: "preview" -> saves to form.s3KeyPreview -> persisted to Mongo
+//
 // Requires:
-// - ownerFetch(profileKey, path, opts) (same as your web ownerApi)
-// - getProfileByKey(profileKey) optional (for label) OR pass label via route
-//
-// Upload flow (web):
-// 1) Pick file via <input type="file" />
-// 2) POST /api/owner/paid-videos/sign-upload -> { ok:true, key, putUrl, fileUrl? }
-// 3) PUT blob to putUrl (Content-Type)
-// 4) Save video doc with thumbnailKey + s3KeyFull, etc.
-//
-// Notes:
-// - Uses simple HTML/CSS (no libs)
-// - Uses window.confirm instead of RN Alert
-// - Uses <dialog> modal (supported in modern browsers)
+// - ownerJsonWeb(path, { method, profileKey, headers, body })
+// - backend: POST /api/owner/paid-videos/sign-upload supports kind: "video" | "preview" | "thumbnail"
+// - backend: POST /api/owner/paid-videos accepts s3KeyPreview
+// - backend: GET /api/owner/paid-videos returns s3KeyPreview
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ownerJsonWeb } from "../utils/ownerApi.web";
-
 import { getProfileByKey } from "../services/profileRegistry";
 import { getActiveProfileKey } from "../config/apiBase";
 
 /* ------------------------------ ownerJson ------------------------------ */
 async function ownerJson(path, { method = "GET", profileKey, body, headers } = {}) {
-    return await ownerJsonWeb(path, {
-      method,
-      profileKey,
-      headers,
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-  }
-  
-  
+  return await ownerJsonWeb(path, {
+    method,
+    profileKey,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+}
 
 /* ------------------------------ helpers ------------------------------ */
 function dollarsFromCents(cents) {
@@ -58,7 +50,9 @@ function badgeText(v) {
   const pub = v.isPublished ? "Published" : "Draft";
   const src = String(v.sourceType || "s3").toLowerCase() === "link" ? "Link" : "S3";
   const acc =
-    String(v.access || "free").toLowerCase() === "paid" ? `Paid ${dollarsFromCents(v.priceCents)}` : "Free";
+    String(v.access || "free").toLowerCase() === "paid"
+      ? `Paid ${dollarsFromCents(v.priceCents)}`
+      : "Free";
   return `${pub} • ${acc} • ${src}`;
 }
 
@@ -86,9 +80,17 @@ function validateForm(form) {
   }
 
   if (sourceType === "s3") {
-    if (!String(form.s3KeyFull || "").trim()) return "Pick a video (or set s3KeyFull) for S3 uploads.";
+    if (!String(form.s3KeyFull || "").trim())
+      return "Pick a video (or set s3KeyFull) for S3 uploads.";
+
+    // ✅ If paid, strongly recommend preview exists (real preview)
+    const access = String(form.access || "free").toLowerCase();
+    if (access === "paid" && !String(form.s3KeyPreview || "").trim()) {
+      return "Paid videos must include a preview clip (upload s3KeyPreview).";
+    }
   } else {
-    if (!String(form.externalUrl || "").trim()) return "externalUrl is required when sourceType is link.";
+    if (!String(form.externalUrl || "").trim())
+      return "externalUrl is required when sourceType is link.";
   }
 
   return null;
@@ -122,7 +124,9 @@ export default function OwnerPaidVideosPage() {
   const nav = useNavigate();
   const params = useParams();
 
-  const profileKey = String(params.profileKey || getActiveProfileKey?.() || "").trim().toLowerCase();
+  const profileKey = String(params.profileKey || getActiveProfileKey?.() || "")
+    .trim()
+    .toLowerCase();
   const profile = useMemo(() => (profileKey ? getProfileByKey(profileKey) : null), [profileKey]);
 
   const headerTitle = `${profile?.label || profileKey || "owner"} • Owner Paid Videos`;
@@ -132,6 +136,7 @@ export default function OwnerPaidVideosPage() {
 
   const [saving, setSaving] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingPreview, setUploadingPreview] = useState(false);
   const [uploadingThumb, setUploadingThumb] = useState(false);
 
   const [videos, setVideos] = useState([]);
@@ -188,6 +193,7 @@ export default function OwnerPaidVideosPage() {
     setEditTarget(null);
     setForm(emptyForm);
     setUploadingVideo(false);
+    setUploadingPreview(false);
     setUploadingThumb(false);
     setModalOpen(true);
   }
@@ -216,16 +222,18 @@ export default function OwnerPaidVideosPage() {
     });
 
     setUploadingVideo(false);
+    setUploadingPreview(false);
     setUploadingThumb(false);
     setModalOpen(true);
   }
 
   function closeModal() {
-    if (saving || uploadingVideo || uploadingThumb) return;
+    if (saving || uploadingVideo || uploadingPreview || uploadingThumb) return;
     setModalOpen(false);
     setEditTarget(null);
     setForm(emptyForm);
     setUploadingVideo(false);
+    setUploadingPreview(false);
     setUploadingThumb(false);
   }
 
@@ -245,7 +253,7 @@ export default function OwnerPaidVideosPage() {
     async (file) => {
       if (!profileKey) return alert("Missing profileKey");
       if (!file) return;
-      if (uploadingVideo || uploadingThumb || saving) return;
+      if (uploadingVideo || uploadingPreview || uploadingThumb || saving) return;
 
       try {
         setUploadingVideo(true);
@@ -274,24 +282,68 @@ export default function OwnerPaidVideosPage() {
           ...s,
           sourceType: "s3",
           s3KeyFull: key,
-          s3KeyPreview: "", // server sets after generation
         }));
 
-        alert("Uploaded. Now hit Save.");
+        alert("Video uploaded. Now upload a preview clip (10–20s), then hit Save.");
       } catch (e) {
         alert(e?.message || "Upload failed");
       } finally {
         setUploadingVideo(false);
       }
     },
-    [profileKey, uploadingVideo, uploadingThumb, saving, signUpload]
+    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload]
+  );
+
+  const pickAndUploadPreview = useCallback(
+    async (file) => {
+      if (!profileKey) return alert("Missing profileKey");
+      if (!file) return;
+      if (uploadingVideo || uploadingPreview || uploadingThumb || saving) return;
+
+      try {
+        setUploadingPreview(true);
+
+        const filename = file.name || `preview-${Date.now()}.mp4`;
+        const contentType = file.type || guessVideoContentTypeFromName(filename);
+
+        const signed = await signUpload({ filename, contentType, kind: "preview" });
+        const putUrl = signed?.putUrl;
+        const key = signed?.key;
+
+        if (!putUrl || !key) throw new Error("Preview signer did not return putUrl/key.");
+
+        const putRes = await fetch(putUrl, {
+          method: "PUT",
+          headers: { "Content-Type": contentType },
+          body: file,
+        });
+
+        if (!putRes.ok) {
+          const txt = await putRes.text().catch(() => "");
+          throw new Error(`Preview upload failed (${putRes.status}) ${txt ? `- ${txt}` : ""}`.trim());
+        }
+
+        setForm((s) => ({
+          ...s,
+          sourceType: "s3",
+          s3KeyPreview: key,
+        }));
+
+        alert("Preview uploaded. Now hit Save.");
+      } catch (e) {
+        alert(e?.message || "Preview upload failed");
+      } finally {
+        setUploadingPreview(false);
+      }
+    },
+    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload]
   );
 
   const pickAndUploadThumbnail = useCallback(
     async (file) => {
       if (!profileKey) return alert("Missing profileKey");
       if (!file) return;
-      if (uploadingVideo || uploadingThumb || saving) return;
+      if (uploadingVideo || uploadingPreview || uploadingThumb || saving) return;
 
       try {
         setUploadingThumb(true);
@@ -332,12 +384,12 @@ export default function OwnerPaidVideosPage() {
         setUploadingThumb(false);
       }
     },
-    [profileKey, uploadingVideo, uploadingThumb, saving, signUpload]
+    [profileKey, uploadingVideo, uploadingPreview, uploadingThumb, saving, signUpload]
   );
 
   /* ------------------------------ CRUD ------------------------------ */
   async function onSave() {
-    if (uploadingVideo || uploadingThumb) return alert("Upload still in progress.");
+    if (uploadingVideo || uploadingPreview || uploadingThumb) return alert("Upload still in progress.");
 
     const err = validateForm(form);
     if (err) return alert(err);
@@ -345,7 +397,12 @@ export default function OwnerPaidVideosPage() {
     const src = String(form.sourceType || "s3").toLowerCase();
     const isLink = src === "link";
 
-    const access = isLink ? "free" : String(form.access || "free").toLowerCase() === "paid" ? "paid" : "free";
+    const access = isLink
+      ? "free"
+      : String(form.access || "free").toLowerCase() === "paid"
+      ? "paid"
+      : "free";
+
     const priceCents = isLink ? 0 : access === "paid" ? parseDollarsToCents(form.priceDollars) : 0;
 
     const payload = {
@@ -367,7 +424,12 @@ export default function OwnerPaidVideosPage() {
       isPublished: !!form.isPublished,
     };
 
-    if (payload.isPublished && payload.sourceType !== "link" && payload.access === "paid" && !(Number(payload.priceCents) > 0)) {
+    if (
+      payload.isPublished &&
+      payload.sourceType !== "link" &&
+      payload.access === "paid" &&
+      !(Number(payload.priceCents) > 0)
+    ) {
       return alert("Paid videos must have a price before publishing.");
     }
 
@@ -427,7 +489,7 @@ export default function OwnerPaidVideosPage() {
     }
   }
 
-  const saveDisabled = saving || uploadingVideo || uploadingThumb;
+  const saveDisabled = saving || uploadingVideo || uploadingPreview || uploadingThumb;
   const srcIsLink = String(form.sourceType || "s3").toLowerCase() === "link";
   const accessDisabled = srcIsLink;
 
@@ -436,9 +498,13 @@ export default function OwnerPaidVideosPage() {
       <div style={S.header}>
         <button style={S.backBtn} onClick={() => nav(-1)}>{`‹ Back`}</button>
         <div style={S.headerCenter}>
-          <div style={S.headerTitle} title={headerTitle}>{headerTitle}</div>
+          <div style={S.headerTitle} title={headerTitle}>
+            {headerTitle}
+          </div>
         </div>
-        <button style={S.addBtn} onClick={openCreate}>+ Add</button>
+        <button style={S.addBtn} onClick={openCreate}>
+          + Add
+        </button>
       </div>
 
       {loading ? (
@@ -465,31 +531,32 @@ export default function OwnerPaidVideosPage() {
             <div style={S.empty}>
               <div style={S.emptyTitle}>No videos yet</div>
               <div style={S.emptySub}>Add your first video and publish when ready.</div>
-              <button style={S.primaryBtn} onClick={openCreate}>+ Add Video</button>
+              <button style={S.primaryBtn} onClick={openCreate}>
+                + Add Video
+              </button>
             </div>
           ) : (
             <div style={S.list}>
               {videos.map((v) => {
                 const thumb = v.thumbnailUrl;
-                const isPaid = String(v.sourceType || "s3").toLowerCase() !== "link" && String(v.access || "free").toLowerCase() === "paid";
+                const isPaid =
+                  String(v.sourceType || "s3").toLowerCase() !== "link" &&
+                  String(v.access || "free").toLowerCase() === "paid";
 
                 return (
                   <button key={v._id} style={S.cardBtn} onClick={() => openEdit(v)}>
                     <div style={S.card}>
                       <div style={S.thumbWrap}>
-                        {thumb ? (
-                          <img src={thumb} alt="" style={S.thumb} />
-                        ) : (
-                          <div style={{ ...S.thumb, ...S.thumbFallback }}>🎬</div>
-                        )}
-
+                        {thumb ? <img src={thumb} alt="" style={S.thumb} /> : <div style={{ ...S.thumb, ...S.thumbFallback }}>🎬</div>}
                         {isPaid && <div style={S.lockPill}>PAID</div>}
                         {!v.isPublished && <div style={S.draftPill}>DRAFT</div>}
                       </div>
 
                       <div style={S.cardBody}>
                         <div style={S.titleRow}>
-                          <div style={S.title} title={v.title || "Untitled"}>{v.title || "Untitled"}</div>
+                          <div style={S.title} title={v.title || "Untitled"}>
+                            {v.title || "Untitled"}
+                          </div>
                         </div>
 
                         <div style={S.sub} title={v.description || badgeText(v)}>
@@ -540,14 +607,12 @@ export default function OwnerPaidVideosPage() {
         </>
       )}
 
-      {/* Floating add */}
       {!modalOpen && (
         <button style={S.fab} onClick={openCreate} title="Add">
           +
         </button>
       )}
 
-      {/* Modal */}
       {modalOpen && (
         <div style={S.modalOverlay} onMouseDown={(e) => e.target === e.currentTarget && closeModal()}>
           <div style={S.modalCard}>
@@ -563,7 +628,15 @@ export default function OwnerPaidVideosPage() {
                 onClick={onSave}
                 disabled={saveDisabled}
               >
-                {uploadingVideo ? "Uploading video…" : uploadingThumb ? "Uploading thumb…" : saving ? "Saving…" : "Save"}
+                {uploadingVideo
+                  ? "Uploading video…"
+                  : uploadingPreview
+                  ? "Uploading preview…"
+                  : uploadingThumb
+                  ? "Uploading thumb…"
+                  : saving
+                  ? "Saving…"
+                  : "Save"}
               </button>
             </div>
 
@@ -588,7 +661,11 @@ export default function OwnerPaidVideosPage() {
                 <button
                   type="button"
                   onClick={() => setForm((s) => ({ ...s, access: "free", priceDollars: "0.00" }))}
-                  style={{ ...S.choice, ...(form.access === "free" ? S.choiceOn : {}), ...(accessDisabled ? S.choiceDisabled : {}) }}
+                  style={{
+                    ...S.choice,
+                    ...(form.access === "free" ? S.choiceOn : {}),
+                    ...(accessDisabled ? S.choiceDisabled : {}),
+                  }}
                 >
                   Free
                 </button>
@@ -600,7 +677,11 @@ export default function OwnerPaidVideosPage() {
                     setForm((s) => ({ ...s, access: "paid" }));
                   }}
                   disabled={accessDisabled}
-                  style={{ ...S.choice, ...(form.access === "paid" ? S.choiceOn : {}), ...(accessDisabled ? S.choiceDisabled : {}) }}
+                  style={{
+                    ...S.choice,
+                    ...(form.access === "paid" ? S.choiceOn : {}),
+                    ...(accessDisabled ? S.choiceDisabled : {}),
+                  }}
                 >
                   Paid
                 </button>
@@ -624,7 +705,7 @@ export default function OwnerPaidVideosPage() {
                 <button
                   type="button"
                   onClick={() => setForm((s) => ({ ...s, sourceType: "s3" }))}
-                  disabled={uploadingVideo || uploadingThumb}
+                  disabled={uploadingVideo || uploadingPreview || uploadingThumb}
                   style={{ ...S.choice, ...(form.sourceType === "s3" ? S.choiceOn : {}) }}
                 >
                   S3 Upload
@@ -642,7 +723,7 @@ export default function OwnerPaidVideosPage() {
                       s3KeyPreview: "",
                     }))
                   }
-                  disabled={uploadingVideo || uploadingThumb}
+                  disabled={uploadingVideo || uploadingPreview || uploadingThumb}
                   style={{ ...S.choice, ...(form.sourceType === "link" ? S.choiceOn : {}) }}
                 >
                   Link
@@ -651,6 +732,7 @@ export default function OwnerPaidVideosPage() {
 
               {form.sourceType === "s3" ? (
                 <>
+                  {/* FULL VIDEO */}
                   <div style={{ ...S.sectionRow, marginTop: 10 }}>
                     <label style={{ ...S.primaryBtn, flex: 1, cursor: saveDisabled ? "not-allowed" : "pointer", opacity: saveDisabled ? 0.65 : 1 }}>
                       <input
@@ -673,7 +755,33 @@ export default function OwnerPaidVideosPage() {
                     style={S.input}
                     placeholder="videos/profile/abc.mp4"
                     autoCapitalize="none"
-                    disabled={uploadingVideo || uploadingThumb}
+                    disabled={uploadingVideo || uploadingPreview || uploadingThumb}
+                  />
+
+                  {/* PREVIEW VIDEO */}
+                  <div style={{ ...S.sectionRow, marginTop: 10 }}>
+                    <label style={{ ...S.primaryBtn, flex: 1, cursor: saveDisabled ? "not-allowed" : "pointer", opacity: saveDisabled ? 0.65 : 1 }}>
+                      <input
+                        type="file"
+                        accept="video/*"
+                        disabled={saveDisabled}
+                        style={{ display: "none" }}
+                        onChange={(e) => pickAndUploadPreview(e.target.files?.[0] || null)}
+                      />
+                      {uploadingPreview ? "Uploading preview…" : "Pick preview clip (10–20s)"}
+                    </label>
+                  </div>
+
+                  {uploadingPreview ? <div style={S.hint}>Uploading preview clip to S3…</div> : null}
+
+                  <label style={S.label}>s3KeyPreview</label>
+                  <input
+                    value={form.s3KeyPreview}
+                    onChange={(e) => setForm((s) => ({ ...s, s3KeyPreview: e.target.value }))}
+                    style={S.input}
+                    placeholder="video-previews/profile/abc.mp4"
+                    autoCapitalize="none"
+                    disabled={uploadingVideo || uploadingPreview || uploadingThumb}
                   />
                 </>
               ) : (
@@ -685,7 +793,7 @@ export default function OwnerPaidVideosPage() {
                     style={S.input}
                     placeholder="https://…"
                     autoCapitalize="none"
-                    disabled={uploadingVideo || uploadingThumb}
+                    disabled={uploadingVideo || uploadingPreview || uploadingThumb}
                   />
                   <div style={S.hint}>Links are always free (by design).</div>
                 </>
@@ -726,8 +834,8 @@ export default function OwnerPaidVideosPage() {
                     }
                     setForm((s) => ({ ...s, isPublished: next }));
                   }}
-                  disabled={uploadingVideo || uploadingThumb}
-                  style={{ ...S.choice, ...(form.isPublished ? S.choiceOn : {}), ...(uploadingVideo || uploadingThumb ? { opacity: 0.65 } : {}) }}
+                  disabled={uploadingVideo || uploadingPreview || uploadingThumb}
+                  style={{ ...S.choice, ...(form.isPublished ? S.choiceOn : {}), ...(uploadingVideo || uploadingPreview || uploadingThumb ? { opacity: 0.65 } : {}) }}
                 >
                   {form.isPublished ? "Published" : "Draft"}
                 </button>
