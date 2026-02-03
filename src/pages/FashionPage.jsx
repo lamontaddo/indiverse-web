@@ -1,12 +1,15 @@
-// src/pages/FashionPage.jsx ✅ FULL DROP-IN (WEB)
+// src/pages/FashionPage.jsx ✅ FULL DROP-IN (WEB, NO FALLBACKS)
 // Route: /world/:profileKey/fashion
 //
 // ✅ Same world BG (bgUrl from navigation state -> remote config -> icon)
 // ✅ GET /api/fashion?ts=... (sends x-profile-key)
 // ✅ Supports shapes: raw array OR { ok, items: [] }
-// ✅ Fallback items if API fails/empty
-// ✅ Tags row filter (clean chips, not huge pills)
-// ✅ Web "lookbook" cards (image/video cover + glass meta)
+// ✅ NO fallback items
+// ✅ Tags row filter
+// ✅ Thumbnail/media is CLICKABLE to it.url (or link/productUrl/href)
+//
+// Expected item shape from API:
+// { _id/id, brand, name, type, description, styleNote, tag, image, video, url }
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -14,46 +17,6 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 const DEFAULT_REMOTE_CONFIG_URL =
   import.meta.env.VITE_REMOTE_CONFIG_URL ||
   "https://montech-remote-config.s3.amazonaws.com/superapp/config.json";
-
-/* ---------------- fallback data ---------------- */
-
-const FALLBACK_FASHION_ITEMS = [
-  {
-    id: "rl-knit",
-    brand: "Ralph Lauren",
-    name: "Cable-Knit Sweater",
-    type: "Knitwear",
-    description: "Heavy cable-knit for cold days, still clean enough for a night out.",
-    styleNote: "",
-    tag: "Everyday",
-    image: "https://dtcralphlauren.scene7.com/is/image/PoloGSI/s7-1287238_alternate10?$rl_4x5_pdp$",
-    video: "",
-  },
-  {
-    id: "lebron-beanie",
-    brand: "Fitted Beanie",
-    name: "LeBron-Inspired Beanie",
-    type: "Headwear",
-    description: "Low-key statement piece that frames the face on and off camera.",
-    styleNote: "",
-    tag: "Studio",
-    image:
-      "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRbW7klcKLJnB1U0aY-gOnbkYPuuvPTpF_EtraU9tWyxhE7IntjxhFXpS4z2L_6100JPbDZaQpF",
-    video: "",
-  },
-  {
-    id: "anta-sneakers",
-    brand: "ANTA",
-    name: "Hela Style Roots",
-    type: "Sneakers",
-    description: "Performance pair with a modern silhouette for everyday wear.",
-    styleNote: "",
-    tag: "Street",
-    image: "",
-    video:
-      "https://anta.com/cdn/shop/videos/c/vp/10511818e24a467b9c5fa1c09af4230b/10511818e24a467b9c5fa1c09af4230b.HD-1080p-7.2Mbps-59695614.mp4?v=0",
-  },
-];
 
 /* ---------------- helpers ---------------- */
 
@@ -88,6 +51,7 @@ function getProfileByKeyFromCfg(cfg, key) {
 
 async function apiJson(path, { profileKey } = {}) {
   const base = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+  if (!base) throw new Error("VITE_API_BASE_URL is missing");
   const url = `${base}${path}`;
 
   const res = await fetch(url, {
@@ -123,6 +87,7 @@ function normalizeFashion(payload) {
         tag: String(x?.tag || ""),
         image: safeUrl(x?.image),
         video: safeUrl(x?.video),
+        url: safeUrl(x?.url || x?.link || x?.productUrl || x?.href),
       };
     })
     .filter((x) => !!x.id);
@@ -186,16 +151,11 @@ export default function FashionPage() {
       const ts = Date.now();
       const data = await apiJson(`/api/fashion?ts=${ts}`, { profileKey });
       const list = normalizeFashion(data);
-
-      if (!list.length) {
-        setItems(FALLBACK_FASHION_ITEMS);
-        setErrorNote("No items yet — showing backup looks.");
-      } else {
-        setItems(list);
-      }
+      setItems(list);
+      if (!list.length) setErrorNote("No items yet.");
     } catch (e) {
-      setItems(FALLBACK_FASHION_ITEMS);
-      setErrorNote(String(e?.message || "Failed to load fashion. Showing backup looks."));
+      setItems([]);
+      setErrorNote(String(e?.message || "Failed to load fashion."));
     } finally {
       setLoading(false);
     }
@@ -309,13 +269,14 @@ export default function FashionPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="fs-center">
-            <div className="fs-muted">Nothing in this filter yet. Try “All”.</div>
+            <div className="fs-muted">No items yet.</div>
           </div>
         ) : (
           <div className="fs-grid">
-            {filtered.map((it) => (
-              <div className="fs-card" key={it.id}>
-                <div className="fs-media">
+            {filtered.map((it) => {
+              const clickable = it.url && isHttpUrl(it.url);
+              const MediaInner = (
+                <>
                   {it.video ? (
                     <video
                       className="fs-mediaEl"
@@ -336,23 +297,39 @@ export default function FashionPage() {
 
                   {it.brand ? <div className="fs-brandPill">{it.brand}</div> : null}
                   {it.tag ? <div className="fs-tagPill">{it.tag}</div> : null}
-                </div>
 
-                <div className="fs-cardBody">
-                  <div className="fs-piece">{it.name || "Untitled"}</div>
-                  <div className="fs-type">
-                    {it.type || "—"}
-                    {it.tag ? ` • ${it.tag}` : ""}
+                  {clickable ? <div className="fs-openPill">Open ↗</div> : null}
+                </>
+              );
+
+              return (
+                <div className="fs-card" key={it.id}>
+                  <div className="fs-media">
+                    {clickable ? (
+                      <a className="fs-mediaLink" href={it.url} target="_blank" rel="noreferrer">
+                        {MediaInner}
+                      </a>
+                    ) : (
+                      MediaInner
+                    )}
                   </div>
 
-                  {it.styleNote ? (
-                    <div className="fs-desc">{it.styleNote}</div>
-                  ) : it.description ? (
-                    <div className="fs-desc fs-descDim">{it.description}</div>
-                  ) : null}
+                  <div className="fs-cardBody">
+                    <div className="fs-piece">{it.name || "Untitled"}</div>
+                    <div className="fs-type">
+                      {it.type || "—"}
+                      {it.tag ? ` • ${it.tag}` : ""}
+                    </div>
+
+                    {it.styleNote ? (
+                      <div className="fs-desc">{it.styleNote}</div>
+                    ) : it.description ? (
+                      <div className="fs-desc fs-descDim">{it.description}</div>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -590,6 +567,38 @@ export default function FashionPage() {
           object-fit: cover;
           display:block;
         }
+
+        .fs-mediaLink{
+          position:absolute;
+          inset:0;
+          display:block;
+          color: inherit;
+          text-decoration:none;
+        }
+        .fs-mediaLink:focus-visible{
+          outline: 2px solid rgba(255,255,255,0.85);
+          outline-offset: -2px;
+        }
+
+        .fs-openPill{
+          position:absolute;
+          right: 10px;
+          top: 10px;
+          height: 24px;
+          padding: 0 10px;
+          border-radius: 999px;
+          background: rgba(0,0,0,0.55);
+          border: 1px solid rgba(255,255,255,0.16);
+          display:flex;
+          align-items:center;
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: .25px;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          opacity: 0.92;
+        }
+
         .fs-noMedia{
           width: 100%;
           height: 100%;
