@@ -723,6 +723,34 @@ export default function FashionPage() {
           color: rgba(255,255,255,0.70);
           letter-spacing: 0.3px;
         }
+          /* make media not steal clicks */
+.fs-mediaEl{ pointer-events:none; }
+
+/* pills + gradient shouldn't block link */
+.fs-mediaGrad,
+.fs-brandPill,
+.fs-tagPill,
+.fs-openPill{
+  pointer-events:none;
+}
+
+/* the actual clickable overlay */
+.fs-mediaClick{
+  position:absolute;
+  inset:0;
+  z-index: 5;
+  display:block;
+  cursor:pointer;
+  text-decoration:none;
+  color:inherit;
+}
+
+/* focus ring */
+.fs-mediaClick:focus-visible{
+  outline: 2px solid rgba(255,255,255,0.85);
+  outline-offset: -2px;
+}
+
 
         @media (max-width: 1080px){
           .fs-card{ grid-column: span 6; }
