@@ -717,6 +717,10 @@ export default function FashionPage() {
           color: rgba(255,255,255,0.70);
           letter-spacing: 0.3px;
         }
+          .fs-dim{
+  pointer-events: none;
+}
+
 
         @media (max-width: 1080px){
           .fs-card{ grid-column: span 6; }
