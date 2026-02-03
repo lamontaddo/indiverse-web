@@ -305,14 +305,39 @@ export default function FashionPage() {
               return (
                 <div className="fs-card" key={it.id}>
                   <div className="fs-media">
-                    {clickable ? (
-                      <a className="fs-mediaLink" href={it.url} target="_blank" rel="noreferrer">
-                        {MediaInner}
-                      </a>
-                    ) : (
-                      MediaInner
-                    )}
-                  </div>
+  {it.video ? (
+    <video
+      className="fs-mediaEl"
+      src={it.video}
+      muted
+      playsInline
+      loop
+      autoPlay
+      preload="metadata"
+    />
+  ) : it.image ? (
+    <img className="fs-mediaEl" src={it.image} alt="" />
+  ) : (
+    <div className="fs-noMedia">No media</div>
+  )}
+
+  <div className="fs-mediaGrad" />
+
+  {it.brand ? <div className="fs-brandPill">{it.brand}</div> : null}
+  {it.tag ? <div className="fs-tagPill">{it.tag}</div> : null}
+
+  {it.url && isHttpUrl(it.url) ? (
+    <a
+      className="fs-mediaClick"
+      href={it.url}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Open ${it.name || "item"}`}
+      title="Open"
+    />
+  ) : null}
+</div>
+
 
                   <div className="fs-cardBody">
                     <div className="fs-piece">{it.name || "Untitled"}</div>
