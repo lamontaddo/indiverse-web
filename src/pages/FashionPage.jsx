@@ -1,15 +1,13 @@
-// src/pages/FashionPage.jsx ✅ FULL DROP-IN (WEB, NO FALLBACKS)
+// src/pages/FashionPage.jsx ✅ FULL DROP-IN (WEB, NO FALLBACKS, CLICKABLE THUMB)
 // Route: /world/:profileKey/fashion
 //
 // ✅ Same world BG (bgUrl from navigation state -> remote config -> icon)
 // ✅ GET /api/fashion?ts=... (sends x-profile-key)
 // ✅ Supports shapes: raw array OR { ok, items: [] }
 // ✅ NO fallback items
-// ✅ Tags row filter
-// ✅ Thumbnail/media is CLICKABLE to it.url (or link/productUrl/href)
-//
-// Expected item shape from API:
-// { _id/id, brand, name, type, description, styleNote, tag, image, video, url }
+// ✅ Tags row filter + search
+// ✅ Thumbnail/media opens it.url in new tab (auto-fixes urls missing https)
+// ✅ Video/img cannot steal clicks (pointer-events none)
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -29,6 +27,19 @@ function isHttpUrl(s) {
 }
 function cleanKey(v) {
   return String(v || "").trim().toLowerCase();
+}
+
+// ✅ normalize outbound links (handles "www.foo.com/..", "foo.com/..", "//foo.com/..")
+function outboundUrl(raw) {
+  const s = safeUrl(raw);
+  if (!s) return null;
+
+  if (/^\/\//.test(s)) return `https:${s}`;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^www\./i.test(s)) return `https://${s}`;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(s)) return `https://${s}`;
+
+  return null;
 }
 
 async function fetchRemoteConfig({ url = DEFAULT_REMOTE_CONFIG_URL, timeoutMs = 9000 } = {}) {
@@ -87,7 +98,7 @@ function normalizeFashion(payload) {
         tag: String(x?.tag || ""),
         image: safeUrl(x?.image),
         video: safeUrl(x?.video),
-        url: safeUrl(x?.url || x?.link || x?.productUrl || x?.href),
+        url: outboundUrl(x?.url || x?.link || x?.productUrl || x?.href), // ✅ key line
       };
     })
     .filter((x) => !!x.id);
@@ -274,70 +285,52 @@ export default function FashionPage() {
         ) : (
           <div className="fs-grid">
             {filtered.map((it) => {
-              const clickable = it.url && isHttpUrl(it.url);
-              const MediaInner = (
-                <>
-                  {it.video ? (
-                    <video
-                      className="fs-mediaEl"
-                      src={it.video}
-                      muted
-                      playsInline
-                      loop
-                      autoPlay
-                      preload="metadata"
-                    />
-                  ) : it.image ? (
-                    <img className="fs-mediaEl" src={it.image} alt="" />
-                  ) : (
-                    <div className="fs-noMedia">No media</div>
-                  )}
-
-                  <div className="fs-mediaGrad" />
-
-                  {it.brand ? <div className="fs-brandPill">{it.brand}</div> : null}
-                  {it.tag ? <div className="fs-tagPill">{it.tag}</div> : null}
-
-                  {clickable ? <div className="fs-openPill">Open ↗</div> : null}
-                </>
-              );
+              const open = () => {
+                if (!it.url) return;
+                window.open(it.url, "_blank", "noopener,noreferrer");
+              };
 
               return (
                 <div className="fs-card" key={it.id}>
-                  <div className="fs-media">
-  {it.video ? (
-    <video
-      className="fs-mediaEl"
-      src={it.video}
-      muted
-      playsInline
-      loop
-      autoPlay
-      preload="metadata"
-    />
-  ) : it.image ? (
-    <img className="fs-mediaEl" src={it.image} alt="" />
-  ) : (
-    <div className="fs-noMedia">No media</div>
-  )}
+                  <div
+                    className={`fs-media ${it.url ? "fs-mediaClickable" : ""}`}
+                    role={it.url ? "link" : undefined}
+                    tabIndex={it.url ? 0 : -1}
+                    onClick={it.url ? open : undefined}
+                    onKeyDown={
+                      it.url
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              open();
+                            }
+                          }
+                        : undefined
+                    }
+                    title={it.url ? "Open link" : undefined}
+                  >
+                    {it.video ? (
+                      <video
+                        className="fs-mediaEl"
+                        src={it.video}
+                        muted
+                        playsInline
+                        loop
+                        autoPlay
+                        preload="metadata"
+                      />
+                    ) : it.image ? (
+                      <img className="fs-mediaEl" src={it.image} alt="" />
+                    ) : (
+                      <div className="fs-noMedia">No media</div>
+                    )}
 
-  <div className="fs-mediaGrad" />
+                    <div className="fs-mediaGrad" />
 
-  {it.brand ? <div className="fs-brandPill">{it.brand}</div> : null}
-  {it.tag ? <div className="fs-tagPill">{it.tag}</div> : null}
-
-  {it.url && isHttpUrl(it.url) ? (
-    <a
-      className="fs-mediaClick"
-      href={it.url}
-      target="_blank"
-      rel="noreferrer"
-      aria-label={`Open ${it.name || "item"}`}
-      title="Open"
-    />
-  ) : null}
-</div>
-
+                    {it.brand ? <div className="fs-brandPill">{it.brand}</div> : null}
+                    {it.tag ? <div className="fs-tagPill">{it.tag}</div> : null}
+                    {it.url ? <div className="fs-openPill">Open ↗</div> : null}
+                  </div>
 
                   <div className="fs-cardBody">
                     <div className="fs-piece">{it.name || "Untitled"}</div>
@@ -586,42 +579,15 @@ export default function FashionPage() {
           overflow:hidden;
           background: rgba(0,0,0,0.25);
         }
+        .fs-mediaClickable{ cursor: pointer; }
+
+        /* ✅ critical: media never steals clicks */
         .fs-mediaEl{
           width: 100%;
           height: 100%;
           object-fit: cover;
           display:block;
-        }
-
-        .fs-mediaLink{
-          position:absolute;
-          inset:0;
-          display:block;
-          color: inherit;
-          text-decoration:none;
-        }
-        .fs-mediaLink:focus-visible{
-          outline: 2px solid rgba(255,255,255,0.85);
-          outline-offset: -2px;
-        }
-
-        .fs-openPill{
-          position:absolute;
-          right: 10px;
-          top: 10px;
-          height: 24px;
-          padding: 0 10px;
-          border-radius: 999px;
-          background: rgba(0,0,0,0.55);
-          border: 1px solid rgba(255,255,255,0.16);
-          display:flex;
-          align-items:center;
-          font-size: 11px;
-          font-weight: 950;
-          letter-spacing: .25px;
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
-          opacity: 0.92;
+          pointer-events: none;
         }
 
         .fs-noMedia{
@@ -657,6 +623,7 @@ export default function FashionPage() {
           letter-spacing: .35px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
+          pointer-events:none;
         }
 
         .fs-tagPill{
@@ -676,6 +643,33 @@ export default function FashionPage() {
           letter-spacing: .35px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
+          pointer-events:none;
+        }
+
+        .fs-openPill{
+          position:absolute;
+          right: 10px;
+          top: 10px;
+          height: 24px;
+          padding: 0 10px;
+          border-radius: 999px;
+          background: rgba(0,0,0,0.55);
+          border: 1px solid rgba(255,255,255,0.16);
+          display:flex;
+          align-items:center;
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: .25px;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          opacity: 0.92;
+          pointer-events:none;
+        }
+
+        /* keyboard focus */
+        .fs-mediaClickable:focus-visible{
+          outline: 2px solid rgba(255,255,255,0.85);
+          outline-offset: -2px;
         }
 
         .fs-cardBody{
@@ -723,34 +717,6 @@ export default function FashionPage() {
           color: rgba(255,255,255,0.70);
           letter-spacing: 0.3px;
         }
-          /* make media not steal clicks */
-.fs-mediaEl{ pointer-events:none; }
-
-/* pills + gradient shouldn't block link */
-.fs-mediaGrad,
-.fs-brandPill,
-.fs-tagPill,
-.fs-openPill{
-  pointer-events:none;
-}
-
-/* the actual clickable overlay */
-.fs-mediaClick{
-  position:absolute;
-  inset:0;
-  z-index: 5;
-  display:block;
-  cursor:pointer;
-  text-decoration:none;
-  color:inherit;
-}
-
-/* focus ring */
-.fs-mediaClick:focus-visible{
-  outline: 2px solid rgba(255,255,255,0.85);
-  outline-offset: -2px;
-}
-
 
         @media (max-width: 1080px){
           .fs-card{ grid-column: span 6; }
