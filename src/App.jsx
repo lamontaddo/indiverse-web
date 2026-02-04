@@ -43,6 +43,10 @@ import ChatPage from "./pages/ChatPage.jsx";
 import OwnerFashionPage from "./pages/OwnerFashionPage.jsx";
 import LinkPortalPage from "./pages/LinkPortalPage.jsx";
 
+import AccountHome from "./pages/AccountHome.jsx";
+import AccountOrders from "./pages/AccountOrders.jsx";
+import AccountEntitlements from "./pages/AccountEntitlements.jsx";
+
 import OwnerLoginPage from "./pages/OwnerLoginPage.jsx";
 import OwnerHomePage from "./pages/OwnerHomePage.jsx";
 import OwnerAboutPage from "./pages/OwnerAboutPage.jsx";
@@ -164,6 +168,11 @@ export default function App() {
           <Route path="/auth/signup" element={<AuthSignup />} />
           <Route path="/auth/login" element={<AuthLogin />} />
 
+          <Route path="/account" element={<AccountHome />} />
+          <Route path="/account/orders" element={<AccountOrders />} />
+          <Route path="/account/entitlements" element={<AccountEntitlements />} />
+
+          
           <Route path="/profile/:profileKey" element={<ProfileHomeShell />} />
           <Route path="/universe/:profileKey" element={<UniverseScreen />} />
           <Route path="/world/:profileKey" element={<MainScreen />} />
@@ -211,10 +220,9 @@ export default function App() {
 
           {/* ✅ Owner Orders (web) */}
           <Route path="/world/:profileKey/owner/orders" element={<OwnerOrdersPage />} />
-          <Route
-  path="/world/:profileKey/owner/paid-videos"
-  element={<OwnerPaidVideosPage />}
-/>
+          <Route path="/world/:profileKey/owner/paid-videos"element={<OwnerPaidVideosPage />} />
+
+
 
           <Route path="/portal/:profileKey" element={<LinkPortalPage />} />
           <Route path="/portal/:profileKey/:portalKey" element={<LinkPortalPage />} />

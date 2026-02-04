@@ -1,10 +1,7 @@
 // src/pages/UniverseHome.jsx ✅ FULL DROP-IN (Vite React)
-// - Universe bg VIDEO via remote config URL (assets.universeBgVideoUrl preferred)
-// - Icon tiles support remote iconUrl as VIDEO or IMAGE (fallback to letter)
-// - ✅ ONE Refresh button:
-//    - Tap = refresh
-//    - Hold (1.2s) = FORCE refresh (clears remote-config cache keys + cache-bust fetch)
-// - Long-press “VaultGate” navigation (5s hold) like RN version
+// ✅ Change: last tile becomes Sign In (logged out) OR User Initial (logged in)
+// ✅ Reads localStorage buyerUser (JSON) + buyerToken/auth:isAuthed
+// ✅ Tap user tile -> /account (we’ll build that page next)
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -189,6 +186,19 @@ const IconMedia = memo(function IconMedia({ mod }) {
   );
 });
 
+// ✅ NEW: read user from localStorage (no extra API call)
+function readBuyerUser() {
+  try {
+    const raw = localStorage.getItem('buyerUser');
+    if (!raw) return null;
+    const u = JSON.parse(raw);
+    if (!u || typeof u !== 'object') return null;
+    return u;
+  } catch {
+    return null;
+  }
+}
+
 export default function UniverseHome() {
   const navigate = useNavigate();
 
@@ -200,6 +210,9 @@ export default function UniverseHome() {
 
   // pulse animation (scale) every 8s (1s pulse)
   const [pulseOn, setPulseOn] = useState(false);
+
+  // ✅ NEW: auth-derived UI state
+  const [buyerUser, setBuyerUser] = useState(() => readBuyerUser());
 
   const syncRemoteProfiles = useCallback(async ({ force = false } = {}) => {
     try {
@@ -247,6 +260,18 @@ export default function UniverseHome() {
     return () => clearInterval(id);
   }, []);
 
+  // ✅ NEW: keep buyerUser in sync (handles refresh / multi-tab changes)
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (!e) return;
+      if (e.key === 'buyerUser' || e.key === 'buyerToken' || e.key === 'auth:isAuthed') {
+        setBuyerUser(readBuyerUser());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   const longPressVault = useLongPress(() => navigate('/vaultgate'), 5000);
 
   // ✅ ONE refresh button: tap vs hold
@@ -273,7 +298,27 @@ export default function UniverseHome() {
     navigate('/auth/signup', { state: { nextRoute: 'music' } });
   };
 
+  // ✅ NEW: logged-in tile goes to account hub
+  const handleAccount = () => {
+    navigate('/account');
+  };
+
   const activeRealms = modules.length;
+
+  // ✅ NEW: isLoggedIn + initial
+  const isLoggedIn = useMemo(() => {
+    const token = String(localStorage.getItem('buyerToken') || '').trim();
+    const authed = String(localStorage.getItem('auth:isAuthed') || '').trim();
+    return !!token && authed === '1';
+  }, [buyerUser]);
+
+  const userInitial = useMemo(() => {
+    const first = String(buyerUser?.firstName || '').trim();
+    const last = String(buyerUser?.lastName || '').trim();
+    const email = String(buyerUser?.email || '').trim();
+    const base = first || last || email || '?';
+    return base.charAt(0).toUpperCase();
+  }, [buyerUser]);
 
   return (
     <div className="root">
@@ -343,19 +388,34 @@ export default function UniverseHome() {
               </button>
             ))}
 
-            {/* 🔐 HARD-CODED AUTH ICON */}
-            <button className="iconTile" onClick={handleSignIn}>
-              <div className="iconOuterGradient" style={tilePulseStyle}>
-                <div className="iconOuter">
-                  <div className="iconFallback">
-                    <span className="signinIcon" aria-hidden>
-                      ⎋
-                    </span>
+            {/* ✅ AUTH / USER TILE (conditional) */}
+            {isLoggedIn ? (
+              <button className="iconTile" onClick={handleAccount}>
+                <div className="iconOuterGradient" style={tilePulseStyle}>
+                  <div className="iconOuter">
+                    <div className="iconFallback">
+                      <span className="userInitial" aria-hidden>
+                        {userInitial}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="iconLabel">Sign In</div>
-            </button>
+                <div className="iconLabel">Account</div>
+              </button>
+            ) : (
+              <button className="iconTile" onClick={handleSignIn}>
+                <div className="iconOuterGradient" style={tilePulseStyle}>
+                  <div className="iconOuter">
+                    <div className="iconFallback">
+                      <span className="signinIcon" aria-hidden>
+                        ⎋
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="iconLabel">Sign In</div>
+              </button>
+            )}
           </div>
 
           <div className="footer">
@@ -545,6 +605,15 @@ export default function UniverseHome() {
           font-size: 34px;
           color: #00ffff;
           text-shadow: 0 0 12px rgba(0,255,255,0.35);
+        }
+
+        /* ✅ NEW */
+        .userInitial{
+          font-size: 34px;
+          font-weight: 900;
+          color: #fff;
+          letter-spacing: 0.5px;
+          text-shadow: 0 0 12px rgba(255,255,255,0.18);
         }
 
         .iconLabel {

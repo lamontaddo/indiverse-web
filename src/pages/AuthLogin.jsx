@@ -40,25 +40,25 @@ export default function AuthLogin() {
   const onLogin = async () => {
     const em = safeTrim(email).toLowerCase();
     const pw = String(password || "");
-
+  
     if (!em || !pw) {
       alert("Enter email and password.");
       return;
     }
-
+  
     setLoading(true);
     try {
       const res = await apiFetch("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: em, password: pw }),
       });
-
+  
       const data = await res.json().catch(() => null);
       if (!res.ok || !data) {
         alert(data?.error || "Unable to log in.");
         return;
       }
-
+  
       // ✅ CRITICAL: persist token the same way MusicPage / Products expect it
       // Support a few common backend response shapes:
       const token =
@@ -67,17 +67,33 @@ export default function AuthLogin() {
         safeTrim(data?.accessToken) ||
         safeTrim(data?.jwt) ||
         "";
-
-        if (token) {
-            localStorage.setItem("buyerToken", token);
-            localStorage.setItem("auth:isAuthed", "1"); // ✅ critical for MainScreen gate
-          }
-          
-
+  
+      if (token) {
+        localStorage.setItem("buyerToken", token);
+        localStorage.setItem("auth:isAuthed", "1"); // ✅ critical for MainScreen gate
+      }
+  
       // Optional: if backend also returns userId, store it (not required if JWT contains it)
-      const uid = safeTrim(data?.userId || data?.id || data?._id);
+      const uid = safeTrim(data?.userId || data?.id || data?._id || data?.user?.id);
       if (uid) localStorage.setItem("buyerUserId", uid);
-
+  
+      // ✅ NEW (Step 1): persist user object for UI (initials / account hub) — no extra API call needed
+      if (data?.user) {
+        try {
+          localStorage.setItem(
+            "buyerUser",
+            JSON.stringify({
+              id: safeTrim(data?.user?.id),
+              email: safeTrim(data?.user?.email),
+              firstName: safeTrim(data?.user?.firstName),
+              lastName: safeTrim(data?.user?.lastName),
+            })
+          );
+        } catch {
+          // ignore storage/JSON errors
+        }
+      }
+  
       goNextOrHome();
     } catch (err) {
       alert(err?.message || "Something went wrong.");
@@ -85,6 +101,7 @@ export default function AuthLogin() {
       setLoading(false);
     }
   };
+  
 
   return (
     <div style={styles.root}>
