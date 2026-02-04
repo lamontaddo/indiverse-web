@@ -1,21 +1,13 @@
-// src/pages/OwnerFashionPage.jsx ✅ FULL DROP-IN (WEB) — HARDENED + ABSOLUTE API
+// src/pages/OwnerFashionPage.jsx ✅ FULL DROP-IN (WEB) — + OUTBOUND LINK (PRESSABLE)
 // Route: /world/:profileKey/owner/fashion
 //
-// ✅ Brand = input
-// ✅ Type = dropdown
-// ✅ Tag = dropdown + "Add custom…"
-// ✅ StyleNote kept
-// ✅ Removes "description" field
-// ✅ Uses ownerFetchRawWeb (absolute backend base, avoids indiverse-web /api 404)
-// ✅ Accepts API shapes: raw array OR { ok, items } OR { items }
-// ✅ Normalizes items to include id + _id for safe rendering + deletes
-// ✅ Fixes delete path so it never calls /api/owner/fashion/ (missing id)
-// ✅ REQUIRES profileKey (no silent fallback)
-// ✅ 401/403 redirects to /world/:profileKey/owner/login
+// ✅ Adds "Outbound Link" input (saved as `url` on FashionItem)
+// ✅ List shows a PRESSABLE "Open ↗" button when url exists (normalizes missing https)
+// ✅ Keeps your existing Media URL logic (image/video)
+// ✅ Uses ownerFetchRawWeb (absolute backend base)
 //
 // Requires:
 // - ownerFetchRawWeb + normalizeProfileKey from ../utils/ownerApi.web
-// - (optional) getProfileByKey if you want branding; not required here
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -59,6 +51,24 @@ function uniqStrings(arr) {
 
 function clampStr(v) {
   return String(v || "").trim();
+}
+
+function safeUrl(s) {
+  const v = typeof s === "string" ? s.trim() : "";
+  return v ? v : null;
+}
+
+// ✅ normalize outbound links (handles "www.foo.com", "foo.com/..", "//foo.com/..")
+function outboundUrl(raw) {
+  const s = safeUrl(raw);
+  if (!s) return null;
+
+  if (/^\/\//.test(s)) return `https:${s}`;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^www\./i.test(s)) return `https://${s}`;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(s)) return `https://${s}`;
+
+  return null;
 }
 
 /* -------------------- small UI primitives -------------------- */
@@ -134,7 +144,9 @@ export default function OwnerFashionPage() {
   const [pieceType, setPieceType] = useState("");
   const [tag, setTag] = useState("");
   const [styleNote, setStyleNote] = useState("");
+
   const [mediaUrl, setMediaUrl] = useState("");
+  const [linkUrl, setLinkUrl] = useState(""); // ✅ NEW
 
   const [items, setItems] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -142,7 +154,6 @@ export default function OwnerFashionPage() {
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
-  // keep bgUrl if passed
   const bgUrl = location?.state?.bgUrl || null;
 
   // pickers
@@ -176,6 +187,7 @@ export default function OwnerFashionPage() {
     setTag("");
     setStyleNote("");
     setMediaUrl("");
+    setLinkUrl(""); // ✅ NEW
     setCustomTagText("");
   };
 
@@ -211,7 +223,6 @@ export default function OwnerFashionPage() {
     setLoadingList(true);
     setError(null);
 
-    // cancel previous
     if (abortRef.current) abortRef.current.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -265,7 +276,9 @@ export default function OwnerFashionPage() {
     const trimmedType = clampStr(pieceType);
     const trimmedTag = clampStr(tag);
     const trimmedNote = clampStr(styleNote);
+
     const url = clampStr(mediaUrl);
+    const outbound = outboundUrl(linkUrl); // ✅ NEW (normalized)
 
     if (!trimmedBrand || !trimmedName || !trimmedType) return showToast("error", "Brand, name, and type are required.");
     if (!url) return showToast("error", "Paste an image/video URL.");
@@ -283,6 +296,9 @@ export default function OwnerFashionPage() {
         tag: trimmedTag || null,
         image: isProbablyVideoUrl(url) ? null : url,
         video: isProbablyVideoUrl(url) ? url : null,
+
+        // ✅ NEW
+        url: outbound || null,
       };
 
       const res = await ownerFetchRawWeb("/api/owner/fashion", {
@@ -345,6 +361,12 @@ export default function OwnerFashionPage() {
     }
   };
 
+  const openOutbound = (raw) => {
+    const u = outboundUrl(raw);
+    if (!u) return showToast("error", "Missing/invalid link URL.");
+    window.open(u, "_blank", "noopener,noreferrer");
+  };
+
   const customTagFooter = (
     <div>
       <div style={ui.modalHelper}>Add a new tag:</div>
@@ -386,7 +408,7 @@ export default function OwnerFashionPage() {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={ui.title}>Owner Fashion</div>
-          <div style={ui.subtitle}>Brand • Type • Tag • Media</div>
+          <div style={ui.subtitle}>Brand • Type • Tag • Media • Link</div>
           {!canUseApi ? <div style={{ ...ui.subtitle, color: "#fca5a5" }}>Missing profileKey for this page.</div> : null}
         </div>
 
@@ -443,13 +465,35 @@ export default function OwnerFashionPage() {
         {/* Style note */}
         <div style={{ ...ui.label, marginTop: 12 }}>Style note</div>
         <div style={ui.inputWrapMultiline}>
-          <textarea value={styleNote} onChange={(e) => setStyleNote(e.target.value)} style={ui.textarea} placeholder="How you wear it, why it matters…" rows={3} />
+          <textarea
+            value={styleNote}
+            onChange={(e) => setStyleNote(e.target.value)}
+            style={ui.textarea}
+            placeholder="How you wear it, why it matters…"
+            rows={3}
+          />
         </div>
 
         {/* Media URL */}
         <div style={{ ...ui.label, marginTop: 12 }}>Media URL</div>
         <div style={ui.inputWrap}>
-          <input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} style={ui.input} placeholder="Paste image or video URL (mp4, mov...)" />
+          <input
+            value={mediaUrl}
+            onChange={(e) => setMediaUrl(e.target.value)}
+            style={ui.input}
+            placeholder="Paste image or video URL (mp4, mov...)"
+          />
+        </div>
+
+        {/* ✅ NEW: Outbound Link */}
+        <div style={{ ...ui.label, marginTop: 12 }}>Outbound Link (optional)</div>
+        <div style={ui.inputWrap}>
+          <input
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            style={ui.input}
+            placeholder="Paste product link (https://..., www..., etc.)"
+          />
         </div>
 
         <button onClick={handleAddItem} disabled={!canUseApi || saving} style={{ ...ui.saveBtn, opacity: !canUseApi || saving ? 0.6 : 1 }}>
@@ -469,6 +513,8 @@ export default function OwnerFashionPage() {
           <div style={ui.list}>
             {items.map((item) => {
               const itemId = String(item._id || item.id || "").trim();
+              const link = outboundUrl(item.url);
+
               return (
                 <div key={itemId} style={ui.itemCard}>
                   <div style={ui.itemRow}>
@@ -478,12 +524,36 @@ export default function OwnerFashionPage() {
                       <div style={ui.itemTitle} title={item.name}>
                         {item.name}
                       </div>
+
                       <div style={ui.itemMeta} title={`${item.brand} • ${item.type}${item.tag ? ` • ${item.tag}` : ""}`}>
                         {item.brand} • {item.type}
                         {item.tag ? ` • ${item.tag}` : ""}
                       </div>
+
                       {item.styleNote ? <div style={ui.itemNote}>{item.styleNote}</div> : null}
-                      <div style={ui.itemMedia}>{item.video ? "Video" : item.image ? "Image" : "Media"}</div>
+
+                      <div style={ui.itemMedia}>
+                        {item.video ? "Video" : item.image ? "Image" : "Media"}
+                        {link ? <span style={{ opacity: 0.7 }}> • Link</span> : null}
+                      </div>
+
+                      {link ? (
+                        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button style={ui.linkBtn} onClick={() => openOutbound(item.url)} title={link}>
+                            Open ↗
+                          </button>
+                          <button
+                            style={ui.copyBtn}
+                            onClick={() => {
+                              navigator.clipboard?.writeText(link).catch(() => {});
+                              showToast("success", "Link copied");
+                            }}
+                            title="Copy link"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
 
                     <button style={ui.deleteBtn} onClick={() => handleDeleteItem(itemId)} title="Delete">
@@ -651,6 +721,27 @@ const ui = {
   itemMeta: { marginTop: 2, color: "#cbd5f5", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   itemNote: { marginTop: 6, color: "#9ca3af", fontSize: 12, lineHeight: "18px" },
   itemMedia: { marginTop: 6, color: "#6b7280", fontSize: 11, letterSpacing: 0.4 },
+
+  linkBtn: {
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.08)",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  copyBtn: {
+    height: 34,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(2,6,23,0.35)",
+    color: "#e5e7eb",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
 
   deleteBtn: { width: 38, height: 38, borderRadius: 999, border: "1px solid rgba(248,113,113,0.7)", background: "rgba(239,68,68,0.10)", color: "#fecaca", cursor: "pointer", flex: "0 0 auto" },
 
