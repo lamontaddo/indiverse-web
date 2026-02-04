@@ -1,7 +1,8 @@
-// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (Vault Playback – Paid Videos FIXED)
-// ✅ FIX: play call now uses the realm's apiBaseUrl (not current origin)
-// ✅ Handles link videos (mode=link -> opens externalUrl)
-// ✅ Keeps music entitlements listed (no playback yet)
+// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (Vault Playback – Paid Videos + Music)
+// ✅ Paid videos: plays via /api/paid-videos/:id/play (per-realm apiBaseUrl)
+// ✅ Music: uses /api/music/catalog to get real titles + cover art + isUnlocked
+//         then plays via /api/music/tracks/:id/stream?mode=full (fallback preview on 403)
+// ✅ Cross-profile Vault (no realm navigation)
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -52,6 +53,14 @@ function normalizeProfiles(cfg) {
     .filter((p) => p.key && p.apiBaseUrl);
 }
 
+function secondsToMMSS(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const m = Math.floor(n / 60);
+  const s = Math.floor(n % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function AccountEntitlements() {
   const nav = useNavigate();
   const [buyerUser] = useState(readBuyerUser);
@@ -61,8 +70,11 @@ export default function AccountEntitlements() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // 🎬 vault player
-  const [player, setPlayer] = useState(null); // { title, url }
+  // 🎬 video player
+  const [videoPlayer, setVideoPlayer] = useState(null); // { title, url }
+
+  // 🎵 audio player
+  const [audioPlayer, setAudioPlayer] = useState(null); // { title, artist?, coverUrl?, url, mode }
 
   const userId =
     safeTrim(localStorage.getItem("buyerUserId")) || safeTrim(buyerUser?.id);
@@ -77,16 +89,18 @@ export default function AccountEntitlements() {
     const load = async () => {
       setLoading(true);
       setErr("");
+      setItems([]);
 
       try {
         if (!userId) throw new Error("Missing buyer user id (buyerUserId / buyerUser.id).");
+
         const cfg = await fetchRemoteConfig();
         const realms = normalizeProfiles(cfg);
 
         const out = [];
 
         for (const r of realms) {
-          // ----- Paid videos -----
+          // ---------- Paid videos (owned/free) ----------
           try {
             const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos`, {
               headers: {
@@ -109,9 +123,14 @@ export default function AccountEntitlements() {
                   kind: "paid_video",
                   realmKey: r.key,
                   realmLabel: r.label,
-                  apiBaseUrl: r.apiBaseUrl, // ✅ CRITICAL for play
+                  apiBaseUrl: r.apiBaseUrl,
                   id: v?._id,
                   title: safeTrim(v?.title) || "Paid Video",
+                  coverUrl: v?.thumbnailUrl || null,
+                  meta: {
+                    access: v?.access || "free",
+                    owned: !!v?.owned,
+                  },
                 });
               }
             }
@@ -119,44 +138,55 @@ export default function AccountEntitlements() {
             console.log("[entitlements] paid-videos list error", r.key, e?.message);
           }
 
-          // ----- Music (IDs only for now) -----
+          // ---------- Music (catalog -> unlocked tracks) ----------
           try {
-            const mRes = await fetch(`${r.apiBaseUrl}/api/music/purchases`, {
+            const mRes = await fetch(`${r.apiBaseUrl}/api/music/catalog`, {
               headers: {
                 "x-profile-key": r.key,
                 "x-user-id": userId,
+                Authorization: token ? `Bearer ${token}` : "",
                 "Cache-Control": "no-cache",
                 Pragma: "no-cache",
               },
             });
 
             const m = await mRes.json().catch(() => null);
-            if (!mRes.ok) {
-              console.log("[entitlements] music purchases failed", r.key, m?.error || mRes.status);
+            if (!mRes.ok || !m?.ok) {
+              console.log("[entitlements] music catalog failed", r.key, m?.error || mRes.status);
             } else {
-              for (const t of m?.trackIds || []) {
+              const tracks = Array.isArray(m?.tracks) ? m.tracks : [];
+              for (const t of tracks) {
+                if (!t?.isUnlocked) continue;
+
                 out.push({
                   kind: "music_track",
                   realmKey: r.key,
                   realmLabel: r.label,
                   apiBaseUrl: r.apiBaseUrl,
-                  title: `Track • ${t}`,
-                });
-              }
-              for (const a of m?.albumIds || []) {
-                out.push({
-                  kind: "music_album",
-                  realmKey: r.key,
-                  realmLabel: r.label,
-                  apiBaseUrl: r.apiBaseUrl,
-                  title: `Album • ${a}`,
+                  id: t?._id,
+                  title: safeTrim(t?.title) || "Track",
+                  subtitle: safeTrim(t?.albumTitle) || "Single",
+                  coverUrl: t?.coverImageUrl || null,
+                  durationSeconds: t?.durationSeconds ?? null,
                 });
               }
             }
           } catch (e) {
-            console.log("[entitlements] music purchases error", r.key, e?.message);
+            console.log("[entitlements] music catalog error", r.key, e?.message);
           }
         }
+
+        // simple sort: videos first then music, then realm, then title
+        out.sort((a, b) => {
+          const ka = a.kind === "paid_video" ? 0 : 1;
+          const kb = b.kind === "paid_video" ? 0 : 1;
+          if (ka !== kb) return ka - kb;
+          const ra = String(a.realmLabel || a.realmKey || "");
+          const rb = String(b.realmLabel || b.realmKey || "");
+          const rc = ra.localeCompare(rb);
+          if (rc) return rc;
+          return String(a.title || "").localeCompare(String(b.title || ""));
+        });
 
         setItems(out);
       } catch (e) {
@@ -170,17 +200,10 @@ export default function AccountEntitlements() {
     load();
   }, [authed, nav, token, userId]);
 
+  // ---------- Play handlers ----------
+
   const openPaidVideo = async (it) => {
     try {
-      if (!it?.apiBaseUrl) {
-        alert("Missing apiBaseUrl for this realm.");
-        return;
-      }
-      if (!it?.id) {
-        alert("Missing video id.");
-        return;
-      }
-
       const url = `${it.apiBaseUrl}/api/paid-videos/${encodeURIComponent(it.id)}/play?mode=full`;
 
       const res = await fetch(url, {
@@ -199,21 +222,81 @@ export default function AccountEntitlements() {
         return;
       }
 
-      // ✅ Link videos: open externalUrl
       if (data.mode === "link" && safeTrim(data.externalUrl)) {
         window.open(safeTrim(data.externalUrl), "_blank", "noopener,noreferrer");
         return;
       }
 
-      // ✅ S3 videos: play signed URL
       if (!safeTrim(data.url)) {
         alert(data?.error || "No playable URL returned.");
         return;
       }
 
-      setPlayer({ title: it.title, url: safeTrim(data.url) });
+      setVideoPlayer({ title: it.title, url: safeTrim(data.url) });
     } catch (e) {
       alert(e?.message || "Playback failed");
+    }
+  };
+
+  const openMusicTrack = async (it) => {
+    try {
+      const base = it.apiBaseUrl;
+      const id = encodeURIComponent(it.id);
+
+      // try full first
+      const fullUrl = `${base}/api/music/tracks/${id}/stream?mode=full`;
+      let res = await fetch(fullUrl, {
+        headers: {
+          "x-profile-key": it.realmKey,
+          "x-user-id": userId,
+          Authorization: token ? `Bearer ${token}` : "",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      let data = await res.json().catch(() => null);
+
+      // fallback to preview on locked (403)
+      if (res.status === 403 || data?.locked || data?.previewOnly) {
+        const prevUrl = `${base}/api/music/tracks/${id}/stream?mode=preview`;
+        res = await fetch(prevUrl, {
+          headers: {
+            "x-profile-key": it.realmKey,
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+        });
+        data = await res.json().catch(() => null);
+        if (!res.ok || !data?.url) {
+          alert(data?.error || "Unable to play preview.");
+          return;
+        }
+
+        setAudioPlayer({
+          title: it.title,
+          subtitle: it.subtitle || "",
+          coverUrl: it.coverUrl || null,
+          url: safeTrim(data.url),
+          mode: "preview",
+        });
+        return;
+      }
+
+      if (!res.ok || !data?.url) {
+        alert(data?.error || `Unable to play track (${res.status})`);
+        return;
+      }
+
+      setAudioPlayer({
+        title: it.title,
+        subtitle: it.subtitle || "",
+        coverUrl: it.coverUrl || null,
+        url: safeTrim(data.url),
+        mode: "full",
+      });
+    } catch (e) {
+      alert(e?.message || "Music playback failed");
     }
   };
 
@@ -241,33 +324,90 @@ export default function AccountEntitlements() {
       <div className="list">
         {items.map((it, i) => (
           <button
-            key={`${it.kind}-${it.realmKey}-${it.title}-${i}`}
+            key={`${it.kind}-${it.realmKey}-${it.id || it.title}-${i}`}
             className="row"
             onClick={() =>
               it.kind === "paid_video"
                 ? openPaidVideo(it)
-                : alert("Music playback is next step")
+                : it.kind === "music_track"
+                ? openMusicTrack(it)
+                : null
             }
+            title={it.kind === "music_track" ? "Play" : "Open"}
           >
-            <div className="title">{it.title}</div>
-            <div className="meta">
-              {it.kind.replace("_", " ")} • {it.realmLabel}
+            <div className="rowInner">
+              <div className="thumb">
+                {it.coverUrl ? (
+                  <img src={it.coverUrl} alt="" />
+                ) : (
+                  <div className="thumbFallback" />
+                )}
+              </div>
+
+              <div className="txt">
+                <div className="title">{it.title}</div>
+                <div className="meta">
+                  {it.kind === "paid_video"
+                    ? `paid video • ${it.realmLabel}`
+                    : `music • ${it.subtitle || "Single"} • ${it.realmLabel}`}
+                  {it.kind === "music_track" && it.durationSeconds
+                    ? ` • ${secondsToMMSS(it.durationSeconds)}`
+                    : ""}
+                </div>
+              </div>
+
+              <div className="tag">
+                {it.kind === "paid_video" ? "▶︎" : "♪"}
+              </div>
             </div>
           </button>
         ))}
       </div>
 
-      {/* 🎬 PLAYER MODAL */}
-      {player && (
-        <div className="modal" onClick={() => setPlayer(null)}>
+      {/* 🎬 VIDEO PLAYER MODAL */}
+      {videoPlayer && (
+        <div className="modal" onClick={() => setVideoPlayer(null)}>
           <div className="modalInner" onClick={(e) => e.stopPropagation()}>
             <div className="modalTop">
-              <div className="modalTitle">{player.title}</div>
-              <button className="xBtn" onClick={() => setPlayer(null)}>
+              <div className="modalTitle">{videoPlayer.title}</div>
+              <button className="xBtn" onClick={() => setVideoPlayer(null)}>
                 ✕
               </button>
             </div>
-            <video src={player.url} controls autoPlay style={{ width: "100%" }} />
+            <video src={videoPlayer.url} controls autoPlay style={{ width: "100%" }} />
+          </div>
+        </div>
+      )}
+
+      {/* 🎵 AUDIO PLAYER MODAL */}
+      {audioPlayer && (
+        <div className="modal" onClick={() => setAudioPlayer(null)}>
+          <div className="modalInner" onClick={(e) => e.stopPropagation()}>
+            <div className="modalTop">
+              <div className="modalTitle">
+                {audioPlayer.title}
+                {audioPlayer.mode ? (
+                  <span style={{ opacity: 0.7, fontWeight: 700, marginLeft: 10, fontSize: 12 }}>
+                    ({audioPlayer.mode})
+                  </span>
+                ) : null}
+              </div>
+              <button className="xBtn" onClick={() => setAudioPlayer(null)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="audioHead">
+              <div className="audioCover">
+                {audioPlayer.coverUrl ? <img src={audioPlayer.coverUrl} alt="" /> : <div className="thumbFallback" />}
+              </div>
+              <div className="audioMeta">
+                <div className="audioTitle">{audioPlayer.title}</div>
+                {audioPlayer.subtitle ? <div className="audioSub">{audioPlayer.subtitle}</div> : null}
+              </div>
+            </div>
+
+            <audio src={audioPlayer.url} controls autoPlay style={{ width: "100%" }} />
           </div>
         </div>
       )}
@@ -318,8 +458,43 @@ export default function AccountEntitlements() {
           background:rgba(0,0,0,.35);
           cursor:pointer;
         }
-        .title{ font-weight:900; }
-        .meta{ opacity:.7; font-size:12px; margin-top:6px; }
+        .rowInner{
+          display:flex;
+          align-items:center;
+          gap:12px;
+        }
+        .thumb{
+          width:46px;
+          height:46px;
+          border-radius:12px;
+          overflow:hidden;
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(255,255,255,.04);
+          flex: 0 0 auto;
+        }
+        .thumb img{
+          width:100%;
+          height:100%;
+          object-fit:cover;
+          display:block;
+        }
+        .thumbFallback{
+          width:100%;
+          height:100%;
+          background:rgba(255,255,255,.06);
+        }
+        .txt{ flex:1; min-width:0; }
+        .title{ font-weight:900; line-height:1.15; }
+        .meta{ opacity:.7; font-size:12px; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .tag{
+          opacity:.85;
+          font-weight:900;
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(255,255,255,.06);
+          padding:6px 10px;
+          border-radius:999px;
+          flex:0 0 auto;
+        }
 
         .modal{
           position:fixed;
@@ -355,6 +530,26 @@ export default function AccountEntitlements() {
           padding:6px 10px;
           cursor:pointer;
         }
+
+        .audioHead{
+          display:flex;
+          align-items:center;
+          gap:12px;
+          margin: 6px 0 10px;
+        }
+        .audioCover{
+          width:60px;
+          height:60px;
+          border-radius:14px;
+          overflow:hidden;
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(255,255,255,.04);
+          flex: 0 0 auto;
+        }
+        .audioCover img{ width:100%; height:100%; object-fit:cover; display:block; }
+        .audioMeta{ min-width:0; }
+        .audioTitle{ font-weight:900; }
+        .audioSub{ opacity:.7; font-size:12px; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       `}</style>
     </div>
   );
