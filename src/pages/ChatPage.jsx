@@ -59,9 +59,38 @@ function nowIso() {
     return "";
   }
 }
-async function apiFetch(path, options = {}) {
-  return fetch(path, options);
+function cleanBase(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
 }
+function cleanPath(path) {
+  const p = String(path || "").trim();
+  return p.startsWith("/") ? p : `/${p}`;
+}
+
+function getWebApiBase() {
+  // 1) env (recommended)
+  const envBase = cleanBase(import.meta?.env?.VITE_API_BASE_URL);
+
+  // 2) localStorage fallback (optional)
+  let lsBase = "";
+  try {
+    lsBase = cleanBase(localStorage.getItem("apiBaseUrl"));
+  } catch {}
+
+  return envBase || lsBase || ""; // if empty => same-origin
+}
+
+async function apiFetch(path, options = {}) {
+  const base = getWebApiBase();
+  const url = base ? `${base}${cleanPath(path)}` : cleanPath(path);
+
+  return fetch(url, {
+    ...options,
+    // important for cross-origin: DO NOT send cookies unless you use them
+    credentials: "omit",
+  });
+}
+
 function mapIncomingMessages(data, OWNER_KEY) {
   const raw = Array.isArray(data) ? data : Array.isArray(data?.messages) ? data.messages : [];
   return raw.map((m) => ({
