@@ -1,7 +1,7 @@
-// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (Vault Playback – Paid Videos)
-// ✅ Paid video playback happens directly inside Account (no realm navigation)
-// ✅ Uses existing /api/paid-videos/:id/play enforcement
-// ✅ Music entitlements still listed (no playback yet)
+// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (Vault Playback – Paid Videos FIXED)
+// ✅ FIX: play call now uses the realm's apiBaseUrl (not current origin)
+// ✅ Handles link videos (mode=link -> opens externalUrl)
+// ✅ Keeps music entitlements listed (no playback yet)
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -34,19 +34,22 @@ const REMOTE_CONFIG_URL =
 async function fetchRemoteConfig() {
   const res = await fetch(`${REMOTE_CONFIG_URL}?v=${Date.now()}`, {
     cache: "no-store",
+    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
   });
-  if (!res.ok) throw new Error("remote config failed");
+  if (!res.ok) throw new Error(`remote config failed (${res.status})`);
   return res.json();
 }
 
 function normalizeProfiles(cfg) {
-  return (cfg?.profiles || [])
+  const list = Array.isArray(cfg?.profiles) ? cfg.profiles : [];
+  return list
     .filter((p) => p?.enabled !== false && p?.apiBaseUrl)
     .map((p) => ({
-      key: p.key.toLowerCase(),
-      label: p.label || p.key,
-      apiBaseUrl: p.apiBaseUrl.replace(/\/+$/, ""),
-    }));
+      key: safeTrim(p?.key).toLowerCase(),
+      label: safeTrim(p?.label || p?.name || p?.key || "Unknown"),
+      apiBaseUrl: safeTrim(p?.apiBaseUrl).replace(/\/+$/, ""),
+    }))
+    .filter((p) => p.key && p.apiBaseUrl);
 }
 
 export default function AccountEntitlements() {
@@ -62,8 +65,7 @@ export default function AccountEntitlements() {
   const [player, setPlayer] = useState(null); // { title, url }
 
   const userId =
-    safeTrim(localStorage.getItem("buyerUserId")) ||
-    safeTrim(buyerUser?.id);
+    safeTrim(localStorage.getItem("buyerUserId")) || safeTrim(buyerUser?.id);
   const token = safeTrim(localStorage.getItem("buyerToken"));
 
   useEffect(() => {
@@ -77,63 +79,89 @@ export default function AccountEntitlements() {
       setErr("");
 
       try {
+        if (!userId) throw new Error("Missing buyer user id (buyerUserId / buyerUser.id).");
         const cfg = await fetchRemoteConfig();
         const realms = normalizeProfiles(cfg);
+
         const out = [];
 
         for (const r of realms) {
           // ----- Paid videos -----
-          const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos`, {
-            headers: {
-              "x-profile-key": r.key,
-              "x-user-id": userId,
-              Authorization: `Bearer ${token}`,
-            },
-          });
-
-          const pv = await pvRes.json();
-          for (const v of pv || []) {
-            if (v.access === "paid" && !v.owned) continue;
-
-            out.push({
-              kind: "paid_video",
-              realmKey: r.key,
-              realmLabel: r.label,
-              id: v._id,
-              title: v.title,
+          try {
+            const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos`, {
+              headers: {
+                "x-profile-key": r.key,
+                "x-user-id": userId,
+                Authorization: token ? `Bearer ${token}` : "",
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+              },
             });
+
+            const pv = await pvRes.json().catch(() => null);
+            if (!pvRes.ok) {
+              console.log("[entitlements] paid-videos list failed", r.key, pv?.error || pvRes.status);
+            } else {
+              for (const v of pv || []) {
+                if (String(v?.access || "").toLowerCase() === "paid" && !v?.owned) continue;
+
+                out.push({
+                  kind: "paid_video",
+                  realmKey: r.key,
+                  realmLabel: r.label,
+                  apiBaseUrl: r.apiBaseUrl, // ✅ CRITICAL for play
+                  id: v?._id,
+                  title: safeTrim(v?.title) || "Paid Video",
+                });
+              }
+            }
+          } catch (e) {
+            console.log("[entitlements] paid-videos list error", r.key, e?.message);
           }
 
           // ----- Music (IDs only for now) -----
-          const mRes = await fetch(`${r.apiBaseUrl}/api/music/purchases`, {
-            headers: {
-              "x-profile-key": r.key,
-              "x-user-id": userId,
-            },
-          });
+          try {
+            const mRes = await fetch(`${r.apiBaseUrl}/api/music/purchases`, {
+              headers: {
+                "x-profile-key": r.key,
+                "x-user-id": userId,
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+              },
+            });
 
-          const m = await mRes.json();
-          for (const t of m?.trackIds || []) {
-            out.push({
-              kind: "music_track",
-              realmKey: r.key,
-              realmLabel: r.label,
-              title: `Track • ${t}`,
-            });
-          }
-          for (const a of m?.albumIds || []) {
-            out.push({
-              kind: "music_album",
-              realmKey: r.key,
-              realmLabel: r.label,
-              title: `Album • ${a}`,
-            });
+            const m = await mRes.json().catch(() => null);
+            if (!mRes.ok) {
+              console.log("[entitlements] music purchases failed", r.key, m?.error || mRes.status);
+            } else {
+              for (const t of m?.trackIds || []) {
+                out.push({
+                  kind: "music_track",
+                  realmKey: r.key,
+                  realmLabel: r.label,
+                  apiBaseUrl: r.apiBaseUrl,
+                  title: `Track • ${t}`,
+                });
+              }
+              for (const a of m?.albumIds || []) {
+                out.push({
+                  kind: "music_album",
+                  realmKey: r.key,
+                  realmLabel: r.label,
+                  apiBaseUrl: r.apiBaseUrl,
+                  title: `Album • ${a}`,
+                });
+              }
+            }
+          } catch (e) {
+            console.log("[entitlements] music purchases error", r.key, e?.message);
           }
         }
 
         setItems(out);
       } catch (e) {
-        setErr(e.message || "Failed to load entitlements");
+        setErr(e?.message || "Failed to load entitlements");
+        setItems([]);
       } finally {
         setLoading(false);
       }
@@ -144,26 +172,48 @@ export default function AccountEntitlements() {
 
   const openPaidVideo = async (it) => {
     try {
-      const res = await fetch(
-        `/api/paid-videos/${it.id}/play?mode=full`,
-        {
-          headers: {
-            "x-profile-key": it.realmKey,
-            "x-user-id": userId,
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await res.json();
-      if (!res.ok || !data?.url) {
-        alert(data?.error || "Unable to play video");
+      if (!it?.apiBaseUrl) {
+        alert("Missing apiBaseUrl for this realm.");
+        return;
+      }
+      if (!it?.id) {
+        alert("Missing video id.");
         return;
       }
 
-      setPlayer({ title: it.title, url: data.url });
-    } catch {
-      alert("Playback failed");
+      const url = `${it.apiBaseUrl}/api/paid-videos/${encodeURIComponent(it.id)}/play?mode=full`;
+
+      const res = await fetch(url, {
+        headers: {
+          "x-profile-key": it.realmKey,
+          "x-user-id": userId,
+          Authorization: token ? `Bearer ${token}` : "",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        alert(data?.error || `Unable to play video (${res.status})`);
+        return;
+      }
+
+      // ✅ Link videos: open externalUrl
+      if (data.mode === "link" && safeTrim(data.externalUrl)) {
+        window.open(safeTrim(data.externalUrl), "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      // ✅ S3 videos: play signed URL
+      if (!safeTrim(data.url)) {
+        alert(data?.error || "No playable URL returned.");
+        return;
+      }
+
+      setPlayer({ title: it.title, url: safeTrim(data.url) });
+    } catch (e) {
+      alert(e?.message || "Playback failed");
     }
   };
 
@@ -171,20 +221,32 @@ export default function AccountEntitlements() {
 
   return (
     <div className="vaultRoot">
-      <h2>Entitlements</h2>
+      <div className="topRow">
+        <button className="pillBtn" onClick={() => nav("/account")}>
+          ← Account
+        </button>
+        <button className="pillBtn" onClick={() => nav("/")}>
+          Home
+        </button>
+      </div>
 
-      {loading ? <div>Loading…</div> : null}
+      <div className="hdr">
+        <div className="h1">Entitlements</div>
+        <div className="h2">Your vault (cross-profile)</div>
+      </div>
+
+      {loading ? <div className="card">Loading…</div> : null}
       {err ? <div className="err">{err}</div> : null}
 
       <div className="list">
         {items.map((it, i) => (
           <button
-            key={i}
+            key={`${it.kind}-${it.realmKey}-${it.title}-${i}`}
             className="row"
             onClick={() =>
               it.kind === "paid_video"
                 ? openPaidVideo(it)
-                : alert("Music playback next step")
+                : alert("Music playback is next step")
             }
           >
             <div className="title">{it.title}</div>
@@ -197,57 +259,102 @@ export default function AccountEntitlements() {
 
       {/* 🎬 PLAYER MODAL */}
       {player && (
-        <div className="modal">
-          <div className="modalInner">
+        <div className="modal" onClick={() => setPlayer(null)}>
+          <div className="modalInner" onClick={(e) => e.stopPropagation()}>
             <div className="modalTop">
-              <div>{player.title}</div>
-              <button onClick={() => setPlayer(null)}>✕</button>
+              <div className="modalTitle">{player.title}</div>
+              <button className="xBtn" onClick={() => setPlayer(null)}>
+                ✕
+              </button>
             </div>
-            <video
-              src={player.url}
-              controls
-              autoPlay
-              style={{ width: "100%" }}
-            />
+            <video src={player.url} controls autoPlay style={{ width: "100%" }} />
           </div>
         </div>
       )}
 
       <style>{`
-        .vaultRoot{ padding:20px; color:#fff; }
+        .vaultRoot{
+          min-height:100vh;
+          padding:18px;
+          color:#fff;
+          background:linear-gradient(180deg,#0b1020,#090b14,#06070d);
+          font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+        }
+        .topRow{ display:flex; justify-content:space-between; gap:10px; margin-bottom:14px; }
+        .pillBtn{
+          border:1px solid rgba(255,255,255,.12);
+          background:rgba(0,0,0,.28);
+          color:rgba(255,255,255,.9);
+          padding:10px 12px;
+          border-radius:999px;
+          cursor:pointer;
+          backdrop-filter:blur(12px);
+        }
+        .hdr{ margin-bottom:12px; }
+        .h1{ font-size:20px; font-weight:900; }
+        .h2{ margin-top:6px; opacity:.7; font-size:13px; }
+        .card{
+          padding:14px;
+          border-radius:16px;
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(0,0,0,.30);
+          margin-bottom:12px;
+        }
+        .err{
+          color:#ff9a9a;
+          padding:12px;
+          border-radius:14px;
+          border:1px solid rgba(255,80,80,.25);
+          background:rgba(255,80,80,.08);
+          margin-bottom:12px;
+        }
+        .list{ display:flex; flex-direction:column; gap:10px; }
         .row{
           width:100%;
           text-align:left;
           padding:12px;
           border-radius:14px;
-          border:1px solid rgba(255,255,255,.1);
+          border:1px solid rgba(255,255,255,.10);
           background:rgba(0,0,0,.35);
-          margin-bottom:10px;
           cursor:pointer;
         }
-        .title{ font-weight:800 }
-        .meta{ opacity:.7; font-size:12px }
+        .title{ font-weight:900; }
+        .meta{ opacity:.7; font-size:12px; margin-top:6px; }
+
         .modal{
           position:fixed;
           inset:0;
-          background:rgba(0,0,0,.7);
+          background:rgba(0,0,0,.75);
           display:flex;
           align-items:center;
           justify-content:center;
           z-index:999;
+          padding:16px;
         }
         .modalInner{
-          width:min(800px,90vw);
+          width:min(900px,92vw);
           background:#000;
-          padding:12px;
           border-radius:16px;
+          border:1px solid rgba(255,255,255,.10);
+          overflow:hidden;
+          padding:12px;
         }
         .modalTop{
           display:flex;
+          align-items:center;
           justify-content:space-between;
-          margin-bottom:8px;
+          gap:10px;
+          margin-bottom:10px;
         }
-        .err{ color:#ff8080 }
+        .modalTitle{ font-weight:900; font-size:14px; opacity:.95; }
+        .xBtn{
+          border:none;
+          background:rgba(255,255,255,.10);
+          color:#fff;
+          border-radius:10px;
+          padding:6px 10px;
+          cursor:pointer;
+        }
       `}</style>
     </div>
   );
