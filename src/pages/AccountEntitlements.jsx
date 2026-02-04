@@ -1,8 +1,8 @@
-// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (Vault Playback – Paid Videos + Music)
-// ✅ Paid videos: plays via /api/paid-videos/:id/play (per-realm apiBaseUrl)
-// ✅ Music: uses /api/music/catalog to get real titles + cover art + isUnlocked
-//         then plays via /api/music/tracks/:id/stream?mode=full (fallback preview on 403)
-// ✅ Cross-profile Vault (no realm navigation)
+// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (UI UPGRADE: Grouped + Music Search + IndiVerse feel)
+// ✅ Groups: Videos + Music
+// ✅ Search bar filters MUSIC (title / subtitle / realm / (future: artist))
+// ✅ Keeps thumbnails + play/music icons
+// ✅ Keeps Vault playback logic untouched
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -61,6 +61,10 @@ function secondsToMMSS(sec) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function normSearch(s) {
+  return safeTrim(s).toLowerCase();
+}
+
 export default function AccountEntitlements() {
   const nav = useNavigate();
   const [buyerUser] = useState(readBuyerUser);
@@ -74,7 +78,10 @@ export default function AccountEntitlements() {
   const [videoPlayer, setVideoPlayer] = useState(null); // { title, url }
 
   // 🎵 audio player
-  const [audioPlayer, setAudioPlayer] = useState(null); // { title, artist?, coverUrl?, url, mode }
+  const [audioPlayer, setAudioPlayer] = useState(null); // { title, subtitle?, coverUrl?, url, mode }
+
+  // 🔎 music search
+  const [musicQuery, setMusicQuery] = useState("");
 
   const userId =
     safeTrim(localStorage.getItem("buyerUserId")) || safeTrim(buyerUser?.id);
@@ -166,6 +173,8 @@ export default function AccountEntitlements() {
                   id: t?._id,
                   title: safeTrim(t?.title) || "Track",
                   subtitle: safeTrim(t?.albumTitle) || "Single",
+                  // future-proof: if you later add artist on backend, we’ll match it
+                  artist: safeTrim(t?.artist) || safeTrim(t?.artistName) || "",
                   coverUrl: t?.coverImageUrl || null,
                   durationSeconds: t?.durationSeconds ?? null,
                 });
@@ -175,18 +184,6 @@ export default function AccountEntitlements() {
             console.log("[entitlements] music catalog error", r.key, e?.message);
           }
         }
-
-        // simple sort: videos first then music, then realm, then title
-        out.sort((a, b) => {
-          const ka = a.kind === "paid_video" ? 0 : 1;
-          const kb = b.kind === "paid_video" ? 0 : 1;
-          if (ka !== kb) return ka - kb;
-          const ra = String(a.realmLabel || a.realmKey || "");
-          const rb = String(b.realmLabel || b.realmKey || "");
-          const rc = ra.localeCompare(rb);
-          if (rc) return rc;
-          return String(a.title || "").localeCompare(String(b.title || ""));
-        });
 
         setItems(out);
       } catch (e) {
@@ -200,8 +197,35 @@ export default function AccountEntitlements() {
     load();
   }, [authed, nav, token, userId]);
 
-  // ---------- Play handlers ----------
+  // ---------- Grouping ----------
+  const videos = useMemo(
+    () => (items || []).filter((x) => x.kind === "paid_video"),
+    [items]
+  );
+  const musicAll = useMemo(
+    () => (items || []).filter((x) => x.kind === "music_track"),
+    [items]
+  );
 
+  const musicFiltered = useMemo(() => {
+    const q = normSearch(musicQuery);
+    if (!q) return musicAll;
+
+    return musicAll.filter((t) => {
+      const hay = [
+        t.title,
+        t.subtitle,
+        t.artist,
+        t.realmLabel,
+        t.realmKey,
+      ]
+        .map((x) => safeTrim(x).toLowerCase())
+        .join(" ");
+      return hay.includes(q);
+    });
+  }, [musicAll, musicQuery]);
+
+  // ---------- Play handlers ----------
   const openPaidVideo = async (it) => {
     try {
       const url = `${it.apiBaseUrl}/api/paid-videos/${encodeURIComponent(it.id)}/play?mode=full`;
@@ -275,7 +299,7 @@ export default function AccountEntitlements() {
 
         setAudioPlayer({
           title: it.title,
-          subtitle: it.subtitle || "",
+          subtitle: it.artist ? `${it.artist} • ${it.subtitle || ""}`.trim() : it.subtitle || "",
           coverUrl: it.coverUrl || null,
           url: safeTrim(data.url),
           mode: "preview",
@@ -290,7 +314,7 @@ export default function AccountEntitlements() {
 
       setAudioPlayer({
         title: it.title,
-        subtitle: it.subtitle || "",
+        subtitle: it.artist ? `${it.artist} • ${it.subtitle || ""}`.trim() : it.subtitle || "",
         coverUrl: it.coverUrl || null,
         url: safeTrim(data.url),
         mode: "full",
@@ -303,65 +327,149 @@ export default function AccountEntitlements() {
   if (!authed) return null;
 
   return (
-    <div className="vaultRoot">
-      <div className="topRow">
-        <button className="pillBtn" onClick={() => nav("/account")}>
-          ← Account
-        </button>
-        <button className="pillBtn" onClick={() => nav("/")}>
-          Home
-        </button>
-      </div>
+    <div className="ivRoot">
+      <div className="ivBg" />
+      <div className="ivStars" />
 
-      <div className="hdr">
-        <div className="h1">Entitlements</div>
-        <div className="h2">Your vault (cross-profile)</div>
-      </div>
+      <div className="ivWrap">
+        <div className="topRow">
+          <button className="pillBtn" onClick={() => nav("/account")}>
+            ← Account
+          </button>
+          <button className="pillBtn" onClick={() => nav("/")}>
+            Home
+          </button>
+        </div>
 
-      {loading ? <div className="card">Loading…</div> : null}
-      {err ? <div className="err">{err}</div> : null}
+        <div className="hdr">
+          <div className="h1">Entitlements</div>
+          <div className="h2">Your vault (cross-profile)</div>
+        </div>
 
-      <div className="list">
-        {items.map((it, i) => (
-          <button
-            key={`${it.kind}-${it.realmKey}-${it.id || it.title}-${i}`}
-            className="row"
-            onClick={() =>
-              it.kind === "paid_video"
-                ? openPaidVideo(it)
-                : it.kind === "music_track"
-                ? openMusicTrack(it)
-                : null
-            }
-            title={it.kind === "music_track" ? "Play" : "Open"}
-          >
-            <div className="rowInner">
-              <div className="thumb">
-                {it.coverUrl ? (
-                  <img src={it.coverUrl} alt="" />
-                ) : (
-                  <div className="thumbFallback" />
-                )}
-              </div>
+        {loading ? <div className="glassCard">Loading…</div> : null}
+        {err ? <div className="err">{err}</div> : null}
 
-              <div className="txt">
-                <div className="title">{it.title}</div>
-                <div className="meta">
-                  {it.kind === "paid_video"
-                    ? `paid video • ${it.realmLabel}`
-                    : `music • ${it.subtitle || "Single"} • ${it.realmLabel}`}
-                  {it.kind === "music_track" && it.durationSeconds
-                    ? ` • ${secondsToMMSS(it.durationSeconds)}`
-                    : ""}
-                </div>
-              </div>
+        {/* ---------------- VIDEOS ---------------- */}
+        <div className="section">
+          <div className="sectionHead">
+            <div className="sectionTitle">
+              <span className="sectionIcon" aria-hidden>▶︎</span>
+              Videos
+            </div>
+            <div className="sectionCount">{videos.length}</div>
+          </div>
 
-              <div className="tag">
-                {it.kind === "paid_video" ? "▶︎" : "♪"}
+          {videos.length === 0 ? (
+            <div className="emptyGlass">
+              <div className="emptyTitle">No videos yet</div>
+              <div className="emptySub">When you unlock videos, they’ll appear here.</div>
+            </div>
+          ) : (
+            <div className="list">
+              {videos.map((it, i) => (
+                <button
+                  key={`v-${it.realmKey}-${it.id}-${i}`}
+                  className="row"
+                  onClick={() => openPaidVideo(it)}
+                  title="Play"
+                >
+                  <div className="rowInner">
+                    <div className="thumb">
+                      {it.coverUrl ? (
+                        <img src={it.coverUrl} alt="" />
+                      ) : (
+                        <div className="thumbFallback" />
+                      )}
+                      <div className="thumbGlow" />
+                    </div>
+
+                    <div className="txt">
+                      <div className="title">{it.title}</div>
+                      <div className="meta">paid video • {it.realmLabel}</div>
+                    </div>
+
+                    <div className="chip">
+                      <span className="chipIcon" aria-hidden>▶︎</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ---------------- MUSIC ---------------- */}
+        <div className="section">
+          <div className="sectionHead">
+            <div className="sectionTitle">
+              <span className="sectionIcon" aria-hidden>♪</span>
+              Music
+            </div>
+            <div className="sectionCount">{musicFiltered.length}</div>
+          </div>
+
+          <div className="searchWrap">
+            <span className="searchIcon" aria-hidden>⌕</span>
+            <input
+              className="searchInput"
+              value={musicQuery}
+              onChange={(e) => setMusicQuery(e.target.value)}
+              placeholder="Search music (artist, title, album, realm)…"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            {musicQuery ? (
+              <button className="clearBtn" onClick={() => setMusicQuery("")} type="button">
+                ✕
+              </button>
+            ) : null}
+          </div>
+
+          {musicFiltered.length === 0 ? (
+            <div className="emptyGlass">
+              <div className="emptyTitle">{musicAll.length ? "No matches" : "No music yet"}</div>
+              <div className="emptySub">
+                {musicAll.length
+                  ? "Try a different search."
+                  : "When you unlock music, it’ll appear here."}
               </div>
             </div>
-          </button>
-        ))}
+          ) : (
+            <div className="list">
+              {musicFiltered.map((it, i) => (
+                <button
+                  key={`m-${it.realmKey}-${it.id}-${i}`}
+                  className="row"
+                  onClick={() => openMusicTrack(it)}
+                  title="Play"
+                >
+                  <div className="rowInner">
+                    <div className="thumb">
+                      {it.coverUrl ? (
+                        <img src={it.coverUrl} alt="" />
+                      ) : (
+                        <div className="thumbFallback" />
+                      )}
+                      <div className="thumbGlow" />
+                    </div>
+
+                    <div className="txt">
+                      <div className="title">{it.title}</div>
+                      <div className="meta">
+                        music • {it.subtitle || "Single"} • {it.realmLabel}
+                        {it.durationSeconds ? ` • ${secondsToMMSS(it.durationSeconds)}` : ""}
+                      </div>
+                    </div>
+
+                    <div className="chip chipMusic">
+                      <span className="chipIcon" aria-hidden>♪</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 🎬 VIDEO PLAYER MODAL */}
@@ -387,9 +495,7 @@ export default function AccountEntitlements() {
               <div className="modalTitle">
                 {audioPlayer.title}
                 {audioPlayer.mode ? (
-                  <span style={{ opacity: 0.7, fontWeight: 700, marginLeft: 10, fontSize: 12 }}>
-                    ({audioPlayer.mode})
-                  </span>
+                  <span className="modeTag">({audioPlayer.mode})</span>
                 ) : null}
               </div>
               <button className="xBtn" onClick={() => setAudioPlayer(null)}>
@@ -399,11 +505,18 @@ export default function AccountEntitlements() {
 
             <div className="audioHead">
               <div className="audioCover">
-                {audioPlayer.coverUrl ? <img src={audioPlayer.coverUrl} alt="" /> : <div className="thumbFallback" />}
+                {audioPlayer.coverUrl ? (
+                  <img src={audioPlayer.coverUrl} alt="" />
+                ) : (
+                  <div className="thumbFallback" />
+                )}
+                <div className="thumbGlow" />
               </div>
               <div className="audioMeta">
                 <div className="audioTitle">{audioPlayer.title}</div>
-                {audioPlayer.subtitle ? <div className="audioSub">{audioPlayer.subtitle}</div> : null}
+                {audioPlayer.subtitle ? (
+                  <div className="audioSub">{audioPlayer.subtitle}</div>
+                ) : null}
               </div>
             </div>
 
@@ -413,93 +526,291 @@ export default function AccountEntitlements() {
       )}
 
       <style>{`
-        .vaultRoot{
+        .ivRoot{
           min-height:100vh;
-          padding:18px;
+          position:relative;
+          overflow:hidden;
           color:#fff;
-          background:linear-gradient(180deg,#0b1020,#090b14,#06070d);
-          font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+          font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+          background:#03040a;
         }
-        .topRow{ display:flex; justify-content:space-between; gap:10px; margin-bottom:14px; }
+
+        /* IndiVerse cosmic */
+        .ivBg{
+          position:fixed;
+          inset:0;
+          background:
+            radial-gradient(1200px 700px at 50% 0%, rgba(0,255,255,0.10), transparent 55%),
+            radial-gradient(900px 500px at 15% 25%, rgba(124,58,237,0.10), transparent 55%),
+            radial-gradient(900px 500px at 85% 35%, rgba(59,130,246,0.10), transparent 55%),
+            linear-gradient(180deg, #0b1020, #090b14, #06070d);
+          z-index:0;
+        }
+
+        /* star speckle */
+        .ivStars{
+          position:fixed;
+          inset:0;
+          background-image:
+            radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.45) 0, transparent 2px),
+            radial-gradient(1px 1px at 30% 80%, rgba(255,255,255,0.35) 0, transparent 2px),
+            radial-gradient(1px 1px at 70% 30%, rgba(255,255,255,0.30) 0, transparent 2px),
+            radial-gradient(1px 1px at 85% 70%, rgba(255,255,255,0.28) 0, transparent 2px),
+            radial-gradient(1px 1px at 55% 55%, rgba(255,255,255,0.22) 0, transparent 2px);
+          opacity:0.55;
+          z-index:0;
+          pointer-events:none;
+        }
+
+        .ivWrap{
+          position:relative;
+          z-index:1;
+          max-width: 980px;
+          margin: 0 auto;
+          padding: 18px 16px 60px;
+        }
+
+        .topRow{
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+          gap:10px;
+          margin-bottom:14px;
+        }
+
         .pillBtn{
-          border:1px solid rgba(255,255,255,.12);
-          background:rgba(0,0,0,.28);
-          color:rgba(255,255,255,.9);
-          padding:10px 12px;
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(0,0,0,.24);
+          color:rgba(255,255,255,.92);
+          padding:10px 14px;
           border-radius:999px;
           cursor:pointer;
-          backdrop-filter:blur(12px);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 18px 24px rgba(0,0,0,0.35);
         }
-        .hdr{ margin-bottom:12px; }
-        .h1{ font-size:20px; font-weight:900; }
-        .h2{ margin-top:6px; opacity:.7; font-size:13px; }
-        .card{
-          padding:14px;
-          border-radius:16px;
-          border:1px solid rgba(255,255,255,.10);
-          background:rgba(0,0,0,.30);
-          margin-bottom:12px;
+        .pillBtn:active{ transform: scale(0.99); opacity:0.95; }
+
+        .hdr{ margin: 8px 0 14px; }
+        .h1{ font-size: 24px; font-weight: 900; letter-spacing: 0.2px; }
+        .h2{ margin-top: 6px; opacity: 0.72; font-size: 13px; }
+
+        .glassCard{
+          padding: 14px;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.28);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 22px 30px rgba(0,0,0,0.35);
+          margin-bottom: 12px;
         }
+
         .err{
-          color:#ff9a9a;
+          color:#ffb3b3;
           padding:12px;
-          border-radius:14px;
+          border-radius:16px;
           border:1px solid rgba(255,80,80,.25);
-          background:rgba(255,80,80,.08);
+          background: rgba(255,80,80,.08);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
           margin-bottom:12px;
         }
-        .list{ display:flex; flex-direction:column; gap:10px; }
-        .row{
-          width:100%;
-          text-align:left;
-          padding:12px;
-          border-radius:14px;
-          border:1px solid rgba(255,255,255,.10);
-          background:rgba(0,0,0,.35);
+
+        .section{
+          margin-top: 14px;
+          padding: 14px;
+          border-radius: 22px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.22);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          box-shadow: 0 26px 34px rgba(0,0,0,0.38);
+        }
+
+        .sectionHead{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          margin-bottom: 12px;
+        }
+
+        .sectionTitle{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          font-weight: 900;
+          font-size: 14px;
+          letter-spacing: 0.3px;
+          opacity: 0.95;
+          text-transform: uppercase;
+        }
+
+        .sectionIcon{
+          width: 30px;
+          height: 30px;
+          border-radius: 12px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          box-shadow: 0 18px 22px rgba(0,0,0,0.28);
+        }
+
+        .sectionCount{
+          font-size: 12px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.80);
+        }
+
+        .searchWrap{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          padding: 10px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.22);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          margin-bottom: 12px;
+        }
+        .searchIcon{ opacity: 0.75; }
+        .searchInput{
+          flex:1;
+          background: transparent;
+          border: none;
+          outline: none;
+          color: #fff;
+          font-size: 14px;
+        }
+        .clearBtn{
+          border:none;
+          background: rgba(255,255,255,0.08);
+          color: rgba(255,255,255,0.9);
+          border-radius: 12px;
+          padding: 6px 10px;
           cursor:pointer;
         }
+
+        .list{
+          display:flex;
+          flex-direction:column;
+          gap: 10px;
+        }
+
+        .row{
+          width: 100%;
+          text-align:left;
+          padding: 12px;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.20);
+          cursor:pointer;
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
+        }
+        .row:hover{
+          border-color: rgba(0,255,255,0.16);
+        }
+        .row:active{
+          transform: scale(0.995);
+          opacity: 0.96;
+        }
+
         .rowInner{
           display:flex;
           align-items:center;
-          gap:12px;
+          gap: 12px;
         }
+
         .thumb{
-          width:46px;
-          height:46px;
-          border-radius:12px;
+          width: 48px;
+          height: 48px;
+          border-radius: 16px;
           overflow:hidden;
-          border:1px solid rgba(255,255,255,.10);
-          background:rgba(255,255,255,.04);
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.05);
+          position: relative;
           flex: 0 0 auto;
         }
         .thumb img{
           width:100%;
           height:100%;
-          object-fit:cover;
+          object-fit: cover;
           display:block;
         }
         .thumbFallback{
           width:100%;
           height:100%;
-          background:rgba(255,255,255,.06);
+          background: rgba(255,255,255,0.06);
         }
-        .txt{ flex:1; min-width:0; }
-        .title{ font-weight:900; line-height:1.15; }
-        .meta{ opacity:.7; font-size:12px; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .tag{
-          opacity:.85;
-          font-weight:900;
-          border:1px solid rgba(255,255,255,.10);
-          background:rgba(255,255,255,.06);
-          padding:6px 10px;
-          border-radius:999px;
-          flex:0 0 auto;
+        .thumbGlow{
+          position:absolute;
+          inset:-40%;
+          background: radial-gradient(circle at 50% 50%, rgba(0,255,255,0.16), transparent 60%);
+          pointer-events:none;
+          opacity: 0.7;
         }
 
+        .txt{
+          flex:1;
+          min-width:0;
+        }
+        .title{
+          font-weight: 900;
+          letter-spacing: 0.15px;
+          line-height: 1.15;
+        }
+        .meta{
+          margin-top: 6px;
+          opacity: 0.72;
+          font-size: 12px;
+          white-space: nowrap;
+          overflow:hidden;
+          text-overflow: ellipsis;
+        }
+
+        .chip{
+          flex: 0 0 auto;
+          width: 36px;
+          height: 36px;
+          border-radius: 14px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          box-shadow: 0 18px 22px rgba(0,0,0,0.28);
+        }
+        .chipMusic{
+          border-color: rgba(0,255,255,0.14);
+        }
+        .chipIcon{
+          opacity: 0.9;
+          font-weight: 900;
+        }
+
+        .emptyGlass{
+          padding: 16px;
+          border-radius: 18px;
+          border: 1px dashed rgba(255,255,255,0.12);
+          background: rgba(0,0,0,0.18);
+        }
+        .emptyTitle{ font-weight: 900; }
+        .emptySub{ margin-top: 6px; opacity: 0.72; font-size: 13px; }
+
+        /* Modals */
         .modal{
           position:fixed;
           inset:0;
-          background:rgba(0,0,0,.75);
+          background: rgba(0,0,0,0.78);
           display:flex;
           align-items:center;
           justify-content:center;
@@ -507,27 +818,38 @@ export default function AccountEntitlements() {
           padding:16px;
         }
         .modalInner{
-          width:min(900px,92vw);
-          background:#000;
-          border-radius:16px;
-          border:1px solid rgba(255,255,255,.10);
+          width: min(900px, 92vw);
+          background: rgba(0,0,0,0.92);
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
           overflow:hidden;
-          padding:12px;
+          padding: 12px;
+          box-shadow: 0 30px 40px rgba(0,0,0,0.45);
         }
         .modalTop{
           display:flex;
           align-items:center;
           justify-content:space-between;
           gap:10px;
-          margin-bottom:10px;
+          margin-bottom: 10px;
         }
-        .modalTitle{ font-weight:900; font-size:14px; opacity:.95; }
+        .modalTitle{
+          font-weight: 900;
+          font-size: 14px;
+          opacity: 0.96;
+        }
+        .modeTag{
+          opacity: 0.7;
+          font-weight: 800;
+          margin-left: 10px;
+          font-size: 12px;
+        }
         .xBtn{
           border:none;
-          background:rgba(255,255,255,.10);
-          color:#fff;
-          border-radius:10px;
-          padding:6px 10px;
+          background: rgba(255,255,255,0.08);
+          color: rgba(255,255,255,0.9);
+          border-radius: 12px;
+          padding: 6px 10px;
           cursor:pointer;
         }
 
@@ -538,18 +860,31 @@ export default function AccountEntitlements() {
           margin: 6px 0 10px;
         }
         .audioCover{
-          width:60px;
-          height:60px;
-          border-radius:14px;
+          width: 64px;
+          height: 64px;
+          border-radius: 18px;
           overflow:hidden;
-          border:1px solid rgba(255,255,255,.10);
-          background:rgba(255,255,255,.04);
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.05);
+          position: relative;
           flex: 0 0 auto;
         }
         .audioCover img{ width:100%; height:100%; object-fit:cover; display:block; }
         .audioMeta{ min-width:0; }
-        .audioTitle{ font-weight:900; }
-        .audioSub{ opacity:.7; font-size:12px; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .audioTitle{ font-weight: 900; }
+        .audioSub{
+          margin-top: 6px;
+          opacity: 0.72;
+          font-size: 12px;
+          white-space: nowrap;
+          overflow:hidden;
+          text-overflow: ellipsis;
+        }
+
+        @media (min-width: 980px){
+          .ivWrap{ padding-top: 22px; }
+          .h1{ font-size: 26px; }
+        }
       `}</style>
     </div>
   );
