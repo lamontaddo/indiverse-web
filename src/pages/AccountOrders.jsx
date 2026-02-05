@@ -1,9 +1,6 @@
-// src/pages/AccountOrders.jsx ✅ FULL DROP-IN (Vite React) — REAL ORDERS (cross-profile)
-// ✅ Cross-profile buyer orders (remote config realms)
-// ✅ Uses localStorage buyerUser + buyerToken/auth:isAuthed + buyerUserId
-// ✅ Fetches per realm: GET {apiBaseUrl}/api/orders/me?limit=50
-// ✅ Sends: x-profile-key, x-user-id, Authorization
-// ✅ Route: /account/orders
+// src/pages/AccountOrders.jsx ✅ FULL DROP-IN (Vite React) — REAL ORDERS (cross-profile) + PRODUCT IMAGE
+// ✅ Adds item thumbnail from order.items[0].imageUrl / image / coverUrl (best-effort)
+// ✅ If missing, shows a glass fallback tile
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
@@ -80,6 +77,28 @@ function summarizeItems(items) {
   return `${name}${qty > 1 ? ` (x${qty})` : ""}${extra}`;
 }
 
+// ✅ Best-effort thumbnail picker (works even before backend adds it)
+function pickThumbFromOrder(order) {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const first = items[0] || {};
+  const candidates = [
+    first?.imageUrl,
+    first?.imageURL,
+    first?.imgUrl,
+    first?.image,
+    first?.photoUrl,
+    first?.coverUrl,
+    first?.thumbnailUrl,
+    order?.imageUrl,
+    order?.coverUrl,
+    order?.thumbnailUrl,
+  ]
+    .map((x) => safeTrim(x))
+    .filter(Boolean);
+
+  return candidates[0] || "";
+}
+
 export default function AccountOrders() {
   const nav = useNavigate();
 
@@ -106,7 +125,12 @@ export default function AccountOrders() {
 
     const onStorage = (e) => {
       if (!e) return;
-      if (e.key === "buyerUser" || e.key === "buyerToken" || e.key === "auth:isAuthed" || e.key === "buyerUserId") {
+      if (
+        e.key === "buyerUser" ||
+        e.key === "buyerToken" ||
+        e.key === "auth:isAuthed" ||
+        e.key === "buyerUserId"
+      ) {
         setBuyerUser(readBuyerUser());
       }
     };
@@ -152,7 +176,7 @@ export default function AccountOrders() {
 
             const orders = Array.isArray(data?.orders) ? data.orders : [];
             for (const o of orders) {
-              out.push({
+              const mapped = {
                 realmKey: r.key,
                 realmLabel: r.label,
                 apiBaseUrl: r.apiBaseUrl,
@@ -165,7 +189,11 @@ export default function AccountOrders() {
                 createdAt: o?.createdAt || o?.paidAt || null,
                 stripeSessionId: safeTrim(o?.stripeSessionId || ""),
                 items: Array.isArray(o?.items) ? o.items : [],
-              });
+                _raw: o,
+              };
+
+              mapped.thumbUrl = pickThumbFromOrder(mapped._raw);
+              out.push(mapped);
             }
           } catch (e) {
             console.log("[orders] realm error", r.key, e?.message);
@@ -214,7 +242,11 @@ export default function AccountOrders() {
           </button>
 
           <div className="rightRow">
-            <button className="pillBtn" onClick={() => load({ force: true })} disabled={loading || refreshing}>
+            <button
+              className="pillBtn"
+              onClick={() => load({ force: true })}
+              disabled={loading || refreshing}
+            >
               {refreshing ? "Refreshing…" : "Refresh"}
             </button>
             <button className="pillBtn" onClick={() => nav("/")}>
@@ -235,9 +267,7 @@ export default function AccountOrders() {
         ) : items.length === 0 ? (
           <div className="emptyCard">
             <div className="emptyTitle">No orders yet</div>
-            <div className="emptySub">
-              When you buy products, your orders will show up here.
-            </div>
+            <div className="emptySub">When you buy products, your orders will show up here.</div>
           </div>
         ) : (
           <div className="list">
@@ -253,21 +283,36 @@ export default function AccountOrders() {
                   onClick={() => nav(`/account/orders/${encodeURIComponent(id)}`)}
                   title="Order details page next"
                 >
-                  <div className="rowTop">
-                    <div className="rowLeft">
-                      <div className="rowTitle">{summarizeItems(o.items)}</div>
-                      <div className="rowMeta">
-                        {o.createdAt ? fmtDate(o.createdAt) : "—"} • {o.purchaseType} • {o.realmLabel}
-                      </div>
+                  <div className="rowInner">
+                    {/* ✅ THUMB */}
+                    <div className="thumb">
+                      {o.thumbUrl ? <img src={o.thumbUrl} alt="" /> : <div className="thumbFallback" />}
+                      <div className="thumbGlow" />
                     </div>
 
-                    <div className="rowRight">
-                      <div className="rowTotal">{moneyFromCents(o.amountTotalCents, o.currency)}</div>
-                      <div className={badgeClass}>{status}</div>
+                    <div className="rowBody">
+                      <div className="rowTop">
+                        <div className="rowLeft">
+                          <div className="rowTitle">{summarizeItems(o.items)}</div>
+                          <div className="rowMeta">
+                            {o.createdAt ? fmtDate(o.createdAt) : "—"} • {o.purchaseType} •{" "}
+                            {o.realmLabel}
+                          </div>
+                        </div>
+
+                        <div className="rowRight">
+                          <div className="rowTotal">
+                            {moneyFromCents(o.amountTotalCents, o.currency)}
+                          </div>
+                          <div className={badgeClass}>{status}</div>
+                        </div>
+                      </div>
+
+                      {o.stripeSessionId ? (
+                        <div className="rowSub">session: {o.stripeSessionId}</div>
+                      ) : null}
                     </div>
                   </div>
-
-                  {o.stripeSessionId ? <div className="rowSub">session: {o.stripeSessionId}</div> : null}
                 </button>
               );
             })}
@@ -358,10 +403,11 @@ export default function AccountOrders() {
           flex-direction: column;
           gap: 10px;
         }
+
         .row{
           text-align: left;
           border-radius: 18px;
-          padding: 14px;
+          padding: 12px;
           border: 1px solid rgba(255,255,255,0.10);
           background: rgba(0,0,0,0.30);
           color: #fff;
@@ -370,6 +416,43 @@ export default function AccountOrders() {
           transition: transform 120ms ease, opacity 120ms ease;
         }
         .row:active{ transform: scale(0.995); opacity: 0.95; }
+
+        .rowInner{
+          display:flex;
+          align-items:center;
+          gap: 12px;
+        }
+
+        .thumb{
+          width: 52px;
+          height: 52px;
+          border-radius: 16px;
+          overflow: hidden;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.06);
+          position: relative;
+          flex: 0 0 auto;
+        }
+        .thumb img{
+          width:100%;
+          height:100%;
+          object-fit: cover;
+          display:block;
+        }
+        .thumbFallback{
+          width:100%;
+          height:100%;
+          background: rgba(255,255,255,0.06);
+        }
+        .thumbGlow{
+          position:absolute;
+          inset:-40%;
+          background: radial-gradient(circle at 50% 50%, rgba(0,255,255,0.16), transparent 60%);
+          pointer-events:none;
+          opacity: 0.7;
+        }
+
+        .rowBody{ flex: 1; min-width: 0; }
 
         .rowTop{
           display: flex;
@@ -385,7 +468,7 @@ export default function AccountOrders() {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          max-width: 560px;
+          max-width: 520px;
         }
         .rowMeta{
           margin-top: 6px;
@@ -394,7 +477,7 @@ export default function AccountOrders() {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          max-width: 560px;
+          max-width: 520px;
         }
         .rowRight{
           display: flex;
@@ -415,7 +498,7 @@ export default function AccountOrders() {
           letter-spacing: 0.2px;
         }
         .rowSub{
-          margin-top: 10px;
+          margin-top: 8px;
           color: rgba(255,255,255,0.55);
           font-size: 11px;
           white-space: nowrap;
@@ -432,6 +515,7 @@ export default function AccountOrders() {
 
         @media (max-width: 560px){
           .rowTitle, .rowMeta{ max-width: 230px; }
+          .rowRight{ min-width: 120px; }
         }
       `}</style>
     </div>
