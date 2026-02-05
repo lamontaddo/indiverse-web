@@ -1,14 +1,15 @@
-// src/pages/AccountOrders.jsx ✅ FULL DROP-IN (Vite React)
-// ✅ Basic Orders page (placeholder-ready)
-// ✅ Reads auth from localStorage
-// ✅ Tries to fetch orders if API_BASE is set; otherwise shows empty state
+// src/pages/AccountOrders.jsx ✅ FULL DROP-IN (Vite React) — REAL ORDERS (cross-profile)
+// ✅ Cross-profile buyer orders (remote config realms)
+// ✅ Uses localStorage buyerUser + buyerToken/auth:isAuthed + buyerUserId
+// ✅ Fetches per realm: GET {apiBaseUrl}/api/orders/me?limit=50
+// ✅ Sends: x-profile-key, x-user-id, Authorization
 // ✅ Route: /account/orders
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
 function safeTrim(v) {
-  return String(v || "").trim();
+  return String(v ?? "").trim();
 }
 
 function readBuyerUser() {
@@ -29,44 +30,38 @@ function isAuthedNow() {
   return !!token && authed === "1";
 }
 
-// ✅ Uses your existing env pattern if present. If not, it will gracefully fall back.
-function getApiBase() {
-  return (
-    safeTrim(import.meta.env.VITE_API_BASE_URL) ||
-    safeTrim(import.meta.env.VITE_API_BASE) ||
-    ""
-  ).replace(/\/+$/, "");
-}
+const REMOTE_CONFIG_URL =
+  import.meta.env.VITE_REMOTE_CONFIG_URL ||
+  "https://montech-remote-config.s3.amazonaws.com/superapp/config.json";
 
-async function fetchOrders() {
-  const base = getApiBase();
-  if (!base) return { ok: true, items: [], note: "No VITE_API_BASE_URL set." };
-
-  const token = safeTrim(localStorage.getItem("buyerToken"));
-  const res = await fetch(`${base}/api/orders/my`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "Cache-Control": "no-cache",
-      Pragma: "no-cache",
-    },
+async function fetchRemoteConfig({ force = false } = {}) {
+  const url = force ? `${REMOTE_CONFIG_URL}?v=${Date.now()}` : REMOTE_CONFIG_URL;
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
   });
-
-  const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    return { ok: false, error: data?.error || `Orders fetch failed (${res.status})` };
-  }
-
-  // accept shapes: [] OR { ok, orders } OR { ok, items }
-  const items = Array.isArray(data) ? data : Array.isArray(data?.orders) ? data.orders : data?.items;
-  return { ok: true, items: Array.isArray(items) ? items : [] };
+  if (!res.ok) throw new Error(`remote config failed (${res.status})`);
+  return res.json();
 }
 
-function money(cents) {
-  const n = Number(cents);
+function normalizeRealms(cfg) {
+  const list = Array.isArray(cfg?.profiles) ? cfg.profiles : [];
+  return list
+    .filter((p) => p?.enabled !== false)
+    .map((p) => ({
+      key: safeTrim(p?.key).toLowerCase(),
+      label: safeTrim(p?.label || p?.name || p?.key || "Realm"),
+      apiBaseUrl: safeTrim(p?.apiBaseUrl || "").replace(/\/+$/, ""),
+    }))
+    .filter((p) => p.key && p.apiBaseUrl);
+}
+
+function moneyFromCents(cents, currency = "usd") {
+  const n = Number(cents || 0);
   if (!Number.isFinite(n)) return "";
-  return `$${(n / 100).toFixed(2)}`;
+  const cur = safeTrim(currency || "usd").toUpperCase();
+  const sign = cur === "USD" ? "$" : `${cur} `;
+  return `${sign}${(n / 100).toFixed(2)}`;
 }
 
 function fmtDate(d) {
@@ -75,15 +70,33 @@ function fmtDate(d) {
   return dt.toLocaleString();
 }
 
+function summarizeItems(items) {
+  const arr = Array.isArray(items) ? items : [];
+  if (!arr.length) return "—";
+  const first = arr[0];
+  const name = safeTrim(first?.name) || "Item";
+  const qty = Number(first?.quantity || 1);
+  const extra = arr.length > 1 ? ` +${arr.length - 1}` : "";
+  return `${name}${qty > 1 ? ` (x${qty})` : ""}${extra}`;
+}
+
 export default function AccountOrders() {
   const nav = useNavigate();
-  const [buyerUser, setBuyerUser] = useState(() => readBuyerUser());
 
+  const [buyerUser, setBuyerUser] = useState(() => readBuyerUser());
   const authed = useMemo(() => isAuthedNow(), [buyerUser]);
 
+  const token = safeTrim(localStorage.getItem("buyerToken"));
+  const userId = useMemo(() => {
+    const fromStorage = safeTrim(localStorage.getItem("buyerUserId"));
+    const fromUser = safeTrim(buyerUser?.id || buyerUser?._id || buyerUser?.userId);
+    return fromStorage || fromUser || "";
+  }, [buyerUser]);
+
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState("");
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState([]); // flattened orders across realms
 
   useEffect(() => {
     if (!authed) {
@@ -93,7 +106,7 @@ export default function AccountOrders() {
 
     const onStorage = (e) => {
       if (!e) return;
-      if (e.key === "buyerUser" || e.key === "buyerToken" || e.key === "auth:isAuthed") {
+      if (e.key === "buyerUser" || e.key === "buyerToken" || e.key === "auth:isAuthed" || e.key === "buyerUserId") {
         setBuyerUser(readBuyerUser());
       }
     };
@@ -101,29 +114,84 @@ export default function AccountOrders() {
     return () => window.removeEventListener("storage", onStorage);
   }, [authed, nav]);
 
-  const load = async () => {
-    setLoading(true);
-    setErr("");
-    try {
-      const out = await fetchOrders();
-      if (!out.ok) {
-        setErr(out.error || "Unable to load orders.");
+  const load = useCallback(
+    async ({ force = false } = {}) => {
+      if (!authed) return;
+
+      try {
+        force ? setRefreshing(true) : setLoading(true);
+        setErr("");
         setItems([]);
-      } else {
-        setItems(out.items || []);
+
+        if (!userId) throw new Error("Missing buyer user id (buyerUserId / buyerUser.id).");
+
+        const cfg = await fetchRemoteConfig({ force });
+        const realms = normalizeRealms(cfg);
+
+        const out = [];
+
+        for (const r of realms) {
+          try {
+            const res = await fetch(`${r.apiBaseUrl}/api/orders/me?limit=50`, {
+              method: "GET",
+              headers: {
+                "x-profile-key": r.key,
+                "x-user-id": userId,
+                Authorization: token ? `Bearer ${token}` : "",
+                "Cache-Control": "no-cache",
+                Pragma: "no-cache",
+              },
+            });
+
+            const data = await res.json().catch(() => null);
+
+            if (!res.ok || !data?.ok) {
+              console.log("[orders] realm failed", r.key, data?.error || res.status);
+              continue;
+            }
+
+            const orders = Array.isArray(data?.orders) ? data.orders : [];
+            for (const o of orders) {
+              out.push({
+                realmKey: r.key,
+                realmLabel: r.label,
+                apiBaseUrl: r.apiBaseUrl,
+
+                id: safeTrim(o?._id || o?.id),
+                status: safeTrim(o?.status || "unknown").toLowerCase(),
+                purchaseType: safeTrim(o?.purchaseType || "products"),
+                amountTotalCents: o?.amountTotalCents ?? 0,
+                currency: safeTrim(o?.currency || "usd"),
+                createdAt: o?.createdAt || o?.paidAt || null,
+                stripeSessionId: safeTrim(o?.stripeSessionId || ""),
+                items: Array.isArray(o?.items) ? o.items : [],
+              });
+            }
+          } catch (e) {
+            console.log("[orders] realm error", r.key, e?.message);
+          }
+        }
+
+        out.sort((a, b) => {
+          const da = new Date(a.createdAt || 0).getTime() || 0;
+          const db = new Date(b.createdAt || 0).getTime() || 0;
+          return db - da;
+        });
+
+        setItems(out);
+      } catch (e) {
+        setErr(e?.message || "Unable to load orders.");
+        setItems([]);
+      } finally {
+        force ? setRefreshing(false) : setLoading(false);
       }
-    } catch (e) {
-      setErr(e?.message || "Unable to load orders.");
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [authed, token, userId]
+  );
 
   useEffect(() => {
-    if (authed) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authed]);
+    if (authed) load({ force: false });
+  }, [authed, load]);
 
   if (!authed) return null;
 
@@ -138,6 +206,7 @@ export default function AccountOrders() {
   return (
     <div className="ordRoot">
       <div className="ordBg" />
+
       <div className="ordWrap">
         <div className="topRow">
           <button className="pillBtn" onClick={() => nav("/account")}>
@@ -145,8 +214,8 @@ export default function AccountOrders() {
           </button>
 
           <div className="rightRow">
-            <button className="pillBtn" onClick={load} disabled={loading}>
-              {loading ? "Refreshing…" : "Refresh"}
+            <button className="pillBtn" onClick={() => load({ force: true })} disabled={loading || refreshing}>
+              {refreshing ? "Refreshing…" : "Refresh"}
             </button>
             <button className="pillBtn" onClick={() => nav("/")}>
               Home
@@ -156,7 +225,7 @@ export default function AccountOrders() {
 
         <div className="header">
           <div className="title">Orders</div>
-          <div className="sub">Purchases for {name}</div>
+          <div className="sub">Purchases for {name} (cross-profile)</div>
         </div>
 
         {err ? <div className="error">{err}</div> : null}
@@ -167,61 +236,45 @@ export default function AccountOrders() {
           <div className="emptyCard">
             <div className="emptyTitle">No orders yet</div>
             <div className="emptySub">
-              When you buy products or unlock content, your orders will show up here.
-            </div>
-
-            <div className="hint">
-              <span className="mono">Tip:</span> If you want this page to fetch real data, set{" "}
-              <span className="mono">VITE_API_BASE_URL</span> and add a backend route like{" "}
-              <span className="mono">GET /api/orders/my</span>.
+              When you buy products, your orders will show up here.
             </div>
           </div>
         ) : (
           <div className="list">
             {items.map((o, idx) => {
-              const id = o?.id || o?._id || o?.orderId || String(idx);
-              const status = safeTrim(o?.status) || safeTrim(o?.paymentStatus) || "created";
-              const createdAt = o?.createdAt || o?.created || o?.timestamp;
-              const total = o?.totalCents ?? o?.amountTotal ?? o?.amountCents;
-
-              // optional fields that might exist in your models
-              const profileKey = safeTrim(o?.profileKey);
-              const kind = safeTrim(o?.kind || o?.type); // e.g. product/music/video
-              const label = safeTrim(o?.title || o?.itemTitle || o?.description);
+              const id = o.id || o.stripeSessionId || String(idx);
+              const status = safeTrim(o.status || "unknown");
+              const badgeClass = `badge badge_${status.toLowerCase()}`;
 
               return (
                 <button
-                  key={id}
+                  key={`${o.realmKey}:${id}:${idx}`}
                   className="row"
                   onClick={() => nav(`/account/orders/${encodeURIComponent(id)}`)}
-                  title="Open order (placeholder route)"
+                  title="Order details page next"
                 >
                   <div className="rowTop">
                     <div className="rowLeft">
-                      <div className="rowId">{id}</div>
+                      <div className="rowTitle">{summarizeItems(o.items)}</div>
                       <div className="rowMeta">
-                        {createdAt ? fmtDate(createdAt) : "—"}
-                        {profileKey ? ` • ${profileKey}` : ""}
-                        {kind ? ` • ${kind}` : ""}
+                        {o.createdAt ? fmtDate(o.createdAt) : "—"} • {o.purchaseType} • {o.realmLabel}
                       </div>
                     </div>
 
                     <div className="rowRight">
-                      <div className="rowTotal">{total != null ? money(total) : ""}</div>
-                      <div className={`badge badge_${status.toLowerCase()}`}>{status}</div>
+                      <div className="rowTotal">{moneyFromCents(o.amountTotalCents, o.currency)}</div>
+                      <div className={badgeClass}>{status}</div>
                     </div>
                   </div>
 
-                  {label ? <div className="rowLabel">{label}</div> : null}
+                  {o.stripeSessionId ? <div className="rowSub">session: {o.stripeSessionId}</div> : null}
                 </button>
               );
             })}
           </div>
         )}
 
-        <div className="note">
-          Next step: we can wire this to your real order schema + add an order details page.
-        </div>
+        <div className="note">Next: we’ll drop in the order details page.</div>
       </div>
 
       <style>{`
@@ -234,17 +287,18 @@ export default function AccountOrders() {
           font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
         }
         .ordBg{
-          position: absolute;
+          position: fixed;
           inset: 0;
           background: radial-gradient(900px 500px at 50% 15%, rgba(0,255,255,0.08), transparent 60%),
                       linear-gradient(180deg, #0b1020, #090b14, #06070d);
+          z-index: 0;
         }
         .ordWrap{
           position: relative;
           z-index: 1;
           max-width: 980px;
           margin: 0 auto;
-          padding: 22px 16px 40px;
+          padding: 22px 16px 60px;
         }
         .topRow{
           display: flex;
@@ -268,6 +322,7 @@ export default function AccountOrders() {
           backdrop-filter: blur(12px);
         }
         .pillBtn:disabled{ opacity: 0.6; cursor: not-allowed; }
+
         .header{
           padding: 14px 14px 10px;
           border-radius: 18px;
@@ -297,11 +352,6 @@ export default function AccountOrders() {
         }
         .emptyTitle{ font-weight: 900; font-size: 16px; }
         .emptySub{ margin-top: 8px; color: rgba(255,255,255,0.7); font-size: 13px; line-height: 1.4; }
-        .hint{ margin-top: 12px; color: rgba(255,255,255,0.55); font-size: 12px; line-height: 1.4; }
-        .mono{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-          color: rgba(255,255,255,0.82);
-        }
 
         .list{
           display: flex;
@@ -327,28 +377,33 @@ export default function AccountOrders() {
           justify-content: space-between;
           gap: 10px;
         }
-        .rowId{
+        .rowLeft{ min-width: 0; }
+        .rowTitle{
           font-weight: 900;
           font-size: 14px;
           letter-spacing: 0.2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 560px;
         }
         .rowMeta{
           margin-top: 6px;
           color: rgba(255,255,255,0.65);
           font-size: 12px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 560px;
         }
         .rowRight{
           display: flex;
           flex-direction: column;
           align-items: flex-end;
           gap: 8px;
-          min-width: 120px;
+          min-width: 140px;
         }
-        .rowTotal{
-          font-weight: 900;
-          font-size: 14px;
-          color: rgba(255,255,255,0.92);
-        }
+        .rowTotal{ font-weight: 900; font-size: 14px; color: rgba(255,255,255,0.92); }
         .badge{
           font-size: 11px;
           padding: 5px 9px;
@@ -356,13 +411,16 @@ export default function AccountOrders() {
           border: 1px solid rgba(255,255,255,0.14);
           color: rgba(255,255,255,0.85);
           background: rgba(255,255,255,0.06);
-          text-transform: capitalize;
+          text-transform: uppercase;
+          letter-spacing: 0.2px;
         }
-        .rowLabel{
+        .rowSub{
           margin-top: 10px;
-          color: rgba(255,255,255,0.82);
-          font-size: 13px;
-          line-height: 1.35;
+          color: rgba(255,255,255,0.55);
+          font-size: 11px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .note{
@@ -370,6 +428,10 @@ export default function AccountOrders() {
           color: rgba(255,255,255,0.55);
           font-size: 12px;
           text-align: center;
+        }
+
+        @media (max-width: 560px){
+          .rowTitle, .rowMeta{ max-width: 230px; }
         }
       `}</style>
     </div>
