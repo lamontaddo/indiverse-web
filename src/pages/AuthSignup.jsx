@@ -102,7 +102,7 @@ export default function AuthSignup() {
       <div style={styles.content}>
         <div style={styles.header}>
           <div style={styles.superTitle}>MONTECH</div>
-          <div style={styles.indiTitle}>INDIverse</div>
+          <div style={styles.indiTitle}>indiVerse</div>
         </div>
 
         <div style={styles.cardWrap}>
