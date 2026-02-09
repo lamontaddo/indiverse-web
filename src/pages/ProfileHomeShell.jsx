@@ -183,7 +183,7 @@ export default function ProfileHomeShell() {
       <div className="ph-topBar">
         <button className="ph-topBtn" onClick={goBackToIndiverse}>
           <span aria-hidden>🪐</span>
-          <span>INDIverse</span>
+          <span>indiVerse</span>
         </button>
       </div>
 
