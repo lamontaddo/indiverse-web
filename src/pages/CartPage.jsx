@@ -6,7 +6,7 @@
 // ✅ Profile-aware list (only this profile)
 // ✅ Clear cart for this profile (products-only if products mode)
 // ✅ Stripe checkout opens via window.location (Safari-safe)
-// ✅ Products checkout sends userId (reads from localStorage; optional)
+// ✅ Products checkout REQUIRES login via Authorization Bearer token
 // ✅ No Expo deps
 
 import React, { useMemo, useState } from "react";
@@ -48,32 +48,58 @@ function getLineId(it) {
 }
 
 function getBuyerUserIdFromStorage() {
-    // ✅ MUST match apiClient + login storage
-    const keys = [
-      "buyerUserId_v1",     // ✅ our canonical stable key
-      "buyerUserId",
-      "userId",
-      "auth:userId",
-      "indiverse:userId",
-    ];
-  
-    for (const k of keys) {
-      const v = localStorage.getItem(k);
-      if (v && String(v).trim()) return String(v).trim();
-    }
-  
-    // Optional: if you store a JSON user object
-    const raw = localStorage.getItem("buyerUser");
-    if (raw) {
-      try {
-        const u = JSON.parse(raw);
-        return u?.id || u?._id || u?.userId || u?.user?.id || u?.user?._id || null;
-      } catch {}
-    }
-  
-    return null;
+  // ✅ MUST match apiClient + login storage
+  const keys = [
+    "buyerUserId_v1",
+    "buyerUserId",
+    "userId",
+    "auth:userId",
+    "indiverse:userId",
+  ];
+
+  for (const k of keys) {
+    const v = localStorage.getItem(k);
+    if (v && String(v).trim()) return String(v).trim();
   }
-  
+
+  // Optional: if you store a JSON user object
+  const raw = localStorage.getItem("buyerUser");
+  if (raw) {
+    try {
+      const u = JSON.parse(raw);
+      return u?.id || u?._id || u?.userId || u?.user?.id || u?.user?._id || null;
+    } catch {}
+  }
+
+  return null;
+}
+
+function getBuyerTokenFromStorage() {
+  const keys = [
+    "buyerToken_v1",
+    "buyerToken",
+    "auth:token",
+    "authToken",
+    "token",
+    "indiverse:buyerToken",
+  ];
+
+  for (const k of keys) {
+    const v = localStorage.getItem(k);
+    if (v && String(v).trim()) return String(v).trim();
+  }
+
+  // Optional: if you store JSON auth object
+  const raw = localStorage.getItem("buyerAuth");
+  if (raw) {
+    try {
+      const a = JSON.parse(raw);
+      return a?.token || a?.accessToken || a?.jwt || null;
+    } catch {}
+  }
+
+  return null;
+}
 
 export default function CartPage() {
   const nav = useNavigate();
@@ -149,7 +175,7 @@ export default function CartPage() {
   const browseHref =
     cartMode === "products"
       ? `/world/${profileKey}/products`
-      : `/world/${profileKey}/arrangements`; // if you don’t have arrangements on web yet, you can swap this
+      : `/world/${profileKey}/arrangements`;
 
   const handleIncrement = (item) => addItem(item, 1, { profileKey });
   const handleDecrement = (item) => {
@@ -159,7 +185,6 @@ export default function CartPage() {
   };
 
   const handleRemove = (item) => {
-    // ✅ your CartContext supports lineKey string OR item OR legacy id
     if (item?.lineKey) return removeItem(item.lineKey);
     const id = item?.id || item?._id || null;
     if (id) return removeItem(String(id));
@@ -177,14 +202,16 @@ export default function CartPage() {
   const openCheckoutUrl = (json) => {
     const u = json?.checkoutUrl || json?.url || null;
     if (!u) throw new Error("Checkout URL was not returned by the server.");
-
-    // Safari-safe, simplest
     window.location.href = u;
   };
 
   const handleCheckout = async () => {
     if (!filteredItems.length) {
-      alert(cartMode === "products" ? "Add a product to your cart first." : "Add an arrangement to your cart first.");
+      alert(
+        cartMode === "products"
+          ? "Add a product to your cart first."
+          : "Add an arrangement to your cart first."
+      );
       return;
     }
 
@@ -196,17 +223,21 @@ export default function CartPage() {
     setCheckingOut(true);
     try {
       if (cartMode === "products") {
-        const userId = getBuyerUserIdFromStorage();
-        if (!userId) {
+        // ✅ require login
+        const buyerToken = getBuyerTokenFromStorage();
+        const fallbackUserId = getBuyerUserIdFromStorage(); // only used to decide redirect UX
+
+        if (!buyerToken) {
           alert("Please log in — you must be logged in to checkout.");
-          nav(`/auth/login?next=${encodeURIComponent(`/world/${profileKey}/cart?mode=products`)}`);
+          const next = `/world/${profileKey}/cart?mode=products`;
+          nav(`/auth/login?next=${encodeURIComponent(next)}`);
           return;
         }
 
         const payload = {
-          userId,
+          // ✅ DO NOT SEND userId anymore (server uses req.userId from JWT)
           items: filteredItems.map((it) => ({
-            productId: String(getLineId(it) || ""), // backend expects productId
+            productId: String(getLineId(it) || ""),
             quantity: Number(it?.quantity || 1),
             selectedSize: it?.selectedSize || it?.size || null,
             selectedColor: it?.selectedColor || it?.color || null,
@@ -215,7 +246,12 @@ export default function CartPage() {
 
         const res = await profileFetch(profileKey, "/api/checkout/products", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${buyerToken}`,
+            // Optional legacy alias if you want to keep it for debugging:
+            ...(fallbackUserId ? { "x-user-alias": String(fallbackUserId) } : {}),
+          },
           body: JSON.stringify(payload),
         });
 
@@ -224,7 +260,7 @@ export default function CartPage() {
         return;
       }
 
-      // flowers checkout
+      // flowers checkout (no auth required)
       const res = await profileFetch(profileKey, "/api/flowers/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -249,12 +285,18 @@ export default function CartPage() {
     }
   };
 
-  // (Optional) consultation route placeholder for web
   const handleConsultation = () => {
     const summary = filteredItems
-      .map((it) => `${Number(it?.quantity || 1)} × ${it?.name || (cartMode === "products" ? "Product" : "Arrangement")}`)
+      .map(
+        (it) =>
+          `${Number(it?.quantity || 1)} × ${
+            it?.name || (cartMode === "products" ? "Product" : "Arrangement")
+          }`
+      )
       .join("\n");
-    alert(`Consultation request:\n\n${summary}\n\n(Implement your web contact form / order request page next.)`);
+    alert(
+      `Consultation request:\n\n${summary}\n\n(Implement your web contact form / order request page next.)`
+    );
   };
 
   return (
@@ -449,7 +491,17 @@ const styles = {
   h1: { fontSize: 20, fontWeight: 900, letterSpacing: 1.1 },
   sub: { marginTop: 2, fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#cfd3dc" },
 
-  center: { minHeight: "65vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, padding: 24, position: "relative", zIndex: 1 },
+  center: {
+    minHeight: "65vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "column",
+    gap: 12,
+    padding: 24,
+    position: "relative",
+    zIndex: 1,
+  },
   emptyText: { color: "#cfd3dc", fontSize: 14, textAlign: "center" },
   primaryLink: {
     textDecoration: "none",
@@ -463,7 +515,15 @@ const styles = {
     fontSize: 12,
   },
 
-  list: { padding: "14px 18px 120px", display: "grid", gap: 14, position: "relative", zIndex: 1, maxWidth: 900, margin: "0 auto" },
+  list: {
+    padding: "14px 18px 120px",
+    display: "grid",
+    gap: 14,
+    position: "relative",
+    zIndex: 1,
+    maxWidth: 900,
+    margin: "0 auto",
+  },
 
   card: {
     borderRadius: 18,
@@ -487,8 +547,25 @@ const styles = {
   },
   cardText: { flex: 1, padding: 12, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 },
   nameRow: { display: "flex", alignItems: "center", gap: 10 },
-  name: { flex: 1, fontWeight: 900, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  trashBtn: { width: 28, height: 28, borderRadius: 999, border: "none", background: "transparent", color: "#fca5a5", cursor: "pointer", fontSize: 18, lineHeight: "28px" },
+  name: {
+    flex: 1,
+    fontWeight: 900,
+    fontSize: 14,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  trashBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    border: "none",
+    background: "transparent",
+    color: "#fca5a5",
+    cursor: "pointer",
+    fontSize: 18,
+    lineHeight: "28px",
+  },
 
   meta: { color: "#e5e7eb", fontSize: 11, letterSpacing: 0.8, opacity: 0.85 },
   unitPrice: { color: "#f97373", fontWeight: 900, fontSize: 14 },
@@ -530,7 +607,14 @@ const styles = {
     backdropFilter: "blur(12px)",
     zIndex: 6,
   },
-  summaryRow: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, maxWidth: 900, margin: "0 auto 10px" },
+  summaryRow: {
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 12,
+    maxWidth: 900,
+    margin: "0 auto 10px",
+  },
   summaryLabel: { color: "#e5e7eb", fontSize: 13, fontWeight: 700 },
   summaryHint: { color: "#9ca3af", fontSize: 11, marginTop: 2 },
   summaryValue: { color: "#f97373", fontSize: 16, fontWeight: 900 },
