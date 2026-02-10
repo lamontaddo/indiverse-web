@@ -163,7 +163,11 @@ export default function ProductsPage() {
               const isLastReal = index === lastRealIndex;
               const span = !isSingle && isOdd && isLastReal;
 
-              const img = p?.imageUrl || "";
+              const img =
+  (p?.imageUrl && String(p.imageUrl).trim()) ||
+  (Array.isArray(p?.imageUrls) && p.imageUrls[0] ? String(p.imageUrls[0]).trim() : "") ||
+  "";
+
               const name = p?.name || "Item";
               const price = formatPrice(p?.priceCents);
               const inStock = p?.inStock !== false;
