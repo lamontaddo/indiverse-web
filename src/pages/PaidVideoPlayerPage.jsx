@@ -799,6 +799,7 @@ const postComment = useCallback(async () => {
       {isLocked ? <div style={S.lockNote}>Preview is limited to 30 seconds.</div> : null}
 
       {/* Comments Drawer */}
+{/* Comments Drawer */}
 {commentsOpen ? (
   <div style={S.drawerOverlay} onMouseDown={() => setCommentsOpen(false)}>
     <div style={S.drawer} onMouseDown={(e) => e.stopPropagation()}>
@@ -814,6 +815,38 @@ const postComment = useCallback(async () => {
         </button>
       </div>
 
+      {/* ✅ BODY FIRST (comments list) */}
+      <div style={S.drawerBody}>
+        {!canInteract ? (
+          <div style={{ ...S.centerText, padding: 12 }}>Sign in to see comments.</div>
+        ) : commentsLoading ? (
+          <div style={{ ...S.centerText, padding: 12 }}>Loading comments…</div>
+        ) : comments?.length ? (
+          <div style={S.commentList}>
+            {comments.map((c, i) => {
+              const id = String(c?._id || c?.id || i);
+              const name = cleanStr(c?.username || c?.userName || c?.name || c?.author || "User");
+              const text = cleanStr(c?.text || c?.body || c?.message || "");
+              const when = cleanStr(c?.createdAt || c?.created_at || "");
+              return (
+                <div key={id} style={S.commentCard}>
+                  <div style={S.commentTop}>
+                    <div style={S.commentName} title={name}>
+                      {name}
+                    </div>
+                    {when ? <div style={S.commentWhen}>{when}</div> : null}
+                  </div>
+                  <div style={S.commentText}>{text || "…"}</div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ ...S.centerText, padding: 12 }}>No comments yet.</div>
+        )}
+      </div>
+
+      {/* ✅ COMPOSER NOW AT BOTTOM */}
       <div style={S.drawerComposer}>
         {!canInteract ? (
           <div style={S.commentsErr}>Please sign in to view and post comments.</div>
@@ -844,37 +877,6 @@ const postComment = useCallback(async () => {
         {commentsErr ? <div style={S.commentsErr}>{commentsErr}</div> : null}
       </div>
 
-      <div style={S.drawerBody}>
-        {!canInteract ? (
-          <div style={{ ...S.centerText, padding: 12 }}>Sign in to see comments.</div>
-        ) : commentsLoading ? (
-          <div style={{ ...S.centerText, padding: 12 }}>Loading comments…</div>
-        ) : comments?.length ? (
-          <div style={S.commentList}>
-            {comments.map((c, i) => {
-              const id = String(c?._id || c?.id || i);
-              // backend returns username field
-              const name = cleanStr(c?.username || c?.userName || c?.name || c?.author || "User");
-              const text = cleanStr(c?.text || c?.body || c?.message || "");
-              const when = cleanStr(c?.createdAt || c?.created_at || "");
-              return (
-                <div key={id} style={S.commentCard}>
-                  <div style={S.commentTop}>
-                    <div style={S.commentName} title={name}>
-                      {name}
-                    </div>
-                    {when ? <div style={S.commentWhen}>{when}</div> : null}
-                  </div>
-                  <div style={S.commentText}>{text || "…"}</div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={{ ...S.centerText, padding: 12 }}>No comments yet.</div>
-        )}
-      </div>
-
       <div style={S.drawerFooter}>
         <button
           onClick={canInteract ? loadComments : () => requireLoginToast("Please sign in to view comments.")}
@@ -887,6 +889,7 @@ const postComment = useCallback(async () => {
     </div>
   </div>
 ) : null}
+
 
 
       {/* status line */}
@@ -1185,7 +1188,7 @@ const S = {
     fontWeight: 900,
   },
 
-  drawerComposer: { padding: 14, borderBottom: "1px solid rgba(255,255,255,0.08)" },
+  drawerComposer: { padding: 14, borderTop: "1px solid rgba(255,255,255,0.08)" },
   textarea: {
     width: "100%",
     resize: "none",
