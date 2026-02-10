@@ -1,4 +1,4 @@
-// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — S3 IMAGE PICKER + MODAL SCROLL FIX
+// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — S3 IMAGE PICKER + MODAL SCROLL FIX + AVATAR IMG FIX
 // Route: /world/:profileKey/owner/products
 //
 // ✅ FIX: Calls BACKEND base URL (VITE_API_BASE_URL) instead of indiverse-web domain
@@ -9,6 +9,7 @@
 // ✅ FIX: Modal body scrolls reliably (flex column + body overflow)
 // ✅ NEW: Pick images from photo library (file picker), upload to S3 via signed PUT,
 //        auto-fills Primary Image URL + Gallery URLs
+// ✅ FIX: Left avatar shows product image when available; fallback letter is centered on iPhone
 //
 // Owner token: localStorage ownerToken:<profileKey> (fallback ownerToken)
 //
@@ -674,32 +675,61 @@ export default function OwnerProductsPage() {
           </div>
         ) : (
           <div style={styles.list}>
-            {items.map((p) => (
-              <button key={p._id} className="op-row" onClick={() => openEdit(p)}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
-                  <div className="op-avatar">{String(p?.name || "P").slice(0, 1).toUpperCase()}</div>
-                  <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
-                    <div style={styles.rowTitle}>{p.name || "(untitled)"}</div>
-                    <div style={styles.rowSub}>
-                      {p.category ? `${p.category} • ` : ""}
-                      {moneyFromCents(p.priceCents, p.currency)}
-                      {p.stockQty !== null && p.stockQty !== undefined ? ` • qty: ${p.stockQty}` : ""}
+            {items.map((p) => {
+              const avatarSrc =
+                (p?.imageUrl && String(p.imageUrl).trim()) ||
+                (Array.isArray(p?.imageUrls) && p.imageUrls[0] ? String(p.imageUrls[0]).trim() : "") ||
+                "";
+
+              const letter = String(p?.name || "P").slice(0, 1).toUpperCase();
+
+              return (
+                <button key={p._id} className="op-row" onClick={() => openEdit(p)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                    <div className="op-avatar">
+                      {avatarSrc ? (
+                        <img
+                          src={avatarSrc}
+                          alt={p?.name || "Product"}
+                          className="op-avatarImg"
+                          loading="lazy"
+                          onError={(e) => {
+                            // hide broken image; show letter
+                            e.currentTarget.style.display = "none";
+                            const parent = e.currentTarget.parentElement;
+                            if (parent) parent.classList.add("op-avatar--fallback");
+                          }}
+                        />
+                      ) : (
+                        letter
+                      )}
+                      {/* fallback letter if img fails */}
+                      {avatarSrc ? <span className="op-avatarLetter">{letter}</span> : null}
+                    </div>
+
+                    <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+                      <div style={styles.rowTitle}>{p.name || "(untitled)"}</div>
+                      <div style={styles.rowSub}>
+                        {p.category ? `${p.category} • ` : ""}
+                        {moneyFromCents(p.priceCents, p.currency)}
+                        {p.stockQty !== null && p.stockQty !== undefined ? ` • qty: ${p.stockQty}` : ""}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div style={styles.rowRight} onClick={(e) => e.stopPropagation()}>
-                  <div className={p.isPublished ? "op-badge op-badgeOn" : "op-badge"}>
-                    {p.isPublished ? "Published" : "Hidden"}
+                  <div style={styles.rowRight} onClick={(e) => e.stopPropagation()}>
+                    <div className={p.isPublished ? "op-badge op-badgeOn" : "op-badge"}>
+                      {p.isPublished ? "Published" : "Hidden"}
+                    </div>
+
+                    <label className="op-switch">
+                      <input type="checkbox" checked={!!p.isPublished} onChange={() => quickTogglePublished(p)} />
+                      <span className="op-switchUi" />
+                    </label>
                   </div>
-
-                  <label className="op-switch">
-                    <input type="checkbox" checked={!!p.isPublished} onChange={() => quickTogglePublished(p)} />
-                    <span className="op-switchUi" />
-                  </label>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1322,19 +1352,38 @@ function css() {
     background: rgba(255,255,255,0.04);
   }
 
+  /* ✅ AVATAR FIX (center letter + show image) */
   .op-avatar{
     width: 38px;
     height: 38px;
     border-radius: 999px;
-    display:flex;
-    align-items:center;
-    justifyContent:center;
+    display: grid;
+    place-items: center;
     font-weight: 900;
     background: rgba(56,189,248,0.16);
     border: 1px solid rgba(129,140,248,0.6);
     color: rgba(226,232,240,0.95);
     flex: 0 0 auto;
+    overflow: hidden;
+    line-height: 1;
+    font-size: 16px;
+    position: relative;
   }
+  .op-avatarImg{
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .op-avatarLetter{
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .op-avatar--fallback .op-avatarLetter{ opacity: 1; }
 
   .op-badge{
     font-size: 11px;
