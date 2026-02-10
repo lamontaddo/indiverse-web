@@ -1,4 +1,4 @@
-// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — FIXED API BASE (NO /api 404)
+// src/pages/OwnerProductsPage.jsx ✅ FULL DROP-IN (Web) — S3 IMAGE PICKER + MODAL SCROLL FIX
 // Route: /world/:profileKey/owner/products
 //
 // ✅ FIX: Calls BACKEND base URL (VITE_API_BASE_URL) instead of indiverse-web domain
@@ -6,12 +6,16 @@
 // ✅ Adds "Back to IndiVerse" button (to /world/:profileKey)
 // ✅ Enhanced look (accent glow, glass panels, better list rows, cleaner modal)
 // ✅ Requires :profileKey in route (no silent fallback)
+// ✅ FIX: Modal body scrolls reliably (flex column + body overflow)
+// ✅ NEW: Pick images from photo library (file picker), upload to S3 via signed PUT,
+//        auto-fills Primary Image URL + Gallery URLs
+//
 // Owner token: localStorage ownerToken:<profileKey> (fallback ownerToken)
 //
 // IMPORTANT ENV (Render web service):
 //   VITE_API_BASE_URL=https://indiverse-backend.onrender.com
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 /* -------------------- config -------------------- */
@@ -102,6 +106,19 @@ function joinCsv(arr) {
   return arr.join(", ");
 }
 
+function uniqUrls(arr) {
+  const out = [];
+  const seen = new Set();
+  for (const x of arr || []) {
+    const s = String(x || "").trim();
+    if (!s) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
 function hexToRgba(hex, a = 1) {
   const h = String(hex || "").replace("#", "").trim();
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -152,6 +169,12 @@ export default function OwnerProductsPage() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+
+  // ✅ Image picker/upload state
+  const [pickedFiles, setPickedFiles] = useState([]); // File[]
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [imagePreviews, setImagePreviews] = useState([]); // string[] (blob or https)
+  const fileInputRef = useRef(null);
 
   const canUse = useMemo(() => !!profileKey, [profileKey]);
 
@@ -262,12 +285,37 @@ export default function OwnerProductsPage() {
     fetchList();
   }, [fetchList, profileKey]);
 
+  // ✅ cleanup blob URLs when previews change
+  useEffect(() => {
+    return () => {
+      // on unmount, revoke any blob previews
+      for (const u of imagePreviews) {
+        if (String(u).startsWith("blob:")) URL.revokeObjectURL(u);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clearPickedImages = () => {
+    for (const u of imagePreviews) {
+      if (String(u).startsWith("blob:")) URL.revokeObjectURL(u);
+    }
+    setPickedFiles([]);
+    setImagePreviews([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const openCreate = () => {
+    clearPickedImages();
     setForm({ ...EMPTY_FORM });
     setModalOpen(true);
   };
 
   const openEdit = (p) => {
+    clearPickedImages();
+    const urls = uniqUrls([p?.imageUrl, ...(p?.imageUrls || [])].filter(Boolean));
+    setImagePreviews(urls);
+
     setForm({
       _id: p?._id || null,
       name: p?.name || "",
@@ -287,8 +335,95 @@ export default function OwnerProductsPage() {
   };
 
   const closeModal = () => {
-    if (saving) return;
+    if (saving || uploadingImages) return;
     setModalOpen(false);
+  };
+
+  function applyImageUrlsToForm(urls) {
+    const clean = uniqUrls(urls);
+    setForm((s) => ({
+      ...s,
+      imageUrl: clean[0] || "",
+      imageUrlsCsv: joinCsv(clean),
+    }));
+  }
+
+  const onPickImages = (e) => {
+    const files = Array.from(e.target.files || []).filter((f) => f && f.type?.startsWith("image/"));
+    if (!files.length) return;
+
+    // revoke old blob previews
+    for (const u of imagePreviews) {
+      if (String(u).startsWith("blob:")) URL.revokeObjectURL(u);
+    }
+
+    setPickedFiles(files);
+    const previews = files.map((f) => URL.createObjectURL(f));
+    setImagePreviews(previews);
+    // NOTE: don't write blob URLs to form; only after upload returns https urls
+  };
+
+  async function uploadOneImage(file) {
+    const filename = file?.name || `image-${Date.now()}.jpg`;
+    const contentType = file?.type || "image/jpeg";
+
+    // 1) sign
+    const signRes = await ownerFetchWeb(`/api/owner/products/sign-image-upload`, {
+      profileKey,
+      method: "POST",
+      body: JSON.stringify({ filename, contentType }),
+    });
+    const signJson = await readJsonSafe(signRes);
+
+    if (signRes.status === 401 || signRes.status === 403) {
+      goOwnerLogin();
+      return null;
+    }
+    if (!signRes.ok || !signJson?.putUrl || !signJson?.fileUrl) {
+      throw new Error(signJson?.error || signJson?.message || "Unable to sign image upload");
+    }
+
+    // 2) PUT to S3
+    const putRes = await fetch(signJson.putUrl, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      body: file,
+    });
+
+    if (!putRes.ok) {
+      throw new Error(`Upload failed (${putRes.status})`);
+    }
+
+    return String(signJson.fileUrl);
+  }
+
+  const uploadPickedImages = async () => {
+    if (!pickedFiles.length) return;
+
+    try {
+      setUploadingImages(true);
+
+      // sequential uploads (more reliable)
+      const urls = [];
+      for (const f of pickedFiles) {
+        const u = await uploadOneImage(f);
+        if (u) urls.push(u);
+      }
+
+      // revoke blob previews, replace with https urls
+      for (const u of imagePreviews) {
+        if (String(u).startsWith("blob:")) URL.revokeObjectURL(u);
+      }
+
+      setPickedFiles([]);
+      setImagePreviews(urls);
+      applyImageUrlsToForm(urls);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (e) {
+      alert(e?.message || "Unable to upload images");
+    } finally {
+      setUploadingImages(false);
+    }
   };
 
   const saveProduct = async () => {
@@ -574,11 +709,11 @@ export default function OwnerProductsPage() {
         <div style={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && closeModal()}>
           <div style={styles.modal}>
             <div style={styles.modalHeader}>
-              <button className="op-link" onClick={closeModal} disabled={saving}>
+              <button className="op-link" onClick={closeModal} disabled={saving || uploadingImages}>
                 Close
               </button>
               <div style={styles.modalTitle}>{form._id ? "Edit Product" : "New Product"}</div>
-              <button className="op-link op-linkPrimary" onClick={saveProduct} disabled={saving}>
+              <button className="op-link op-linkPrimary" onClick={saveProduct} disabled={saving || uploadingImages}>
                 {saving ? "Saving…" : "Save"}
               </button>
             </div>
@@ -625,7 +760,136 @@ export default function OwnerProductsPage() {
                 </div>
               </div>
 
-              <Field label="Primary Image URL" value={form.imageUrl} onChange={(v) => setForm((s) => ({ ...s, imageUrl: v }))} />
+              {/* ✅ NEW: Photo library picker + S3 upload */}
+              <div style={styles.field}>
+                <div style={styles.label}>Images (Photo Library)</div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="op-btn"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={saving || uploadingImages}
+                  >
+                    Choose Images
+                  </button>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={onPickImages}
+                    style={{ display: "none" }}
+                    disabled={saving || uploadingImages}
+                  />
+
+                  <button
+                    type="button"
+                    className="op-btn op-apply"
+                    onClick={uploadPickedImages}
+                    disabled={saving || uploadingImages || !pickedFiles.length}
+                    title={!pickedFiles.length ? "Choose images first" : "Upload to S3"}
+                  >
+                    {uploadingImages
+                      ? "Uploading…"
+                      : pickedFiles.length
+                      ? `Upload Selected (${pickedFiles.length})`
+                      : "Upload Selected"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="op-btn"
+                    onClick={clearPickedImages}
+                    disabled={saving || uploadingImages}
+                  >
+                    Clear
+                  </button>
+
+                  <div style={{ marginLeft: "auto", opacity: 0.75, fontSize: 12, fontWeight: 800 }}>
+                    {pickedFiles.length ? `${pickedFiles.length} selected` : ""}
+                  </div>
+                </div>
+
+                {!!imagePreviews.length && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    {imagePreviews.map((u, idx) => (
+                      <div
+                        key={`${u}-${idx}`}
+                        style={{
+                          borderRadius: 14,
+                          overflow: "hidden",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          background: "rgba(2,6,23,0.35)",
+                        }}
+                      >
+                        <div style={{ aspectRatio: "1/1", width: "100%", overflow: "hidden" }}>
+                          <img
+                            src={u}
+                            alt={`img-${idx}`}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                          />
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, padding: 8 }}>
+                          <button
+                            type="button"
+                            className="op-chip"
+                            onClick={() => {
+                              const next = [...imagePreviews];
+                              const chosen = next.splice(idx, 1)[0];
+                              next.unshift(chosen);
+                              setImagePreviews(next);
+
+                              // only write to form if these are real urls (not blob)
+                              if (!String(chosen).startsWith("blob:") && next.every((x) => !String(x).startsWith("blob:"))) {
+                                applyImageUrlsToForm(next);
+                              }
+                            }}
+                          >
+                            Make Primary
+                          </button>
+
+                          <button
+                            type="button"
+                            className="op-chip"
+                            onClick={() => {
+                              const next = imagePreviews.filter((_, i) => i !== idx);
+                              setImagePreviews(next);
+
+                              if (next.length && next.every((x) => !String(x).startsWith("blob:"))) {
+                                applyImageUrlsToForm(next);
+                              } else if (next.length === 0) {
+                                setForm((s) => ({ ...s, imageUrl: "", imageUrlsCsv: "" }));
+                              }
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ marginTop: 10, color: "rgba(148,163,184,0.9)", fontSize: 12, fontWeight: 700 }}>
+                  Upload fills Primary + Gallery automatically. You can still paste URLs below if you want.
+                </div>
+              </div>
+
+              <Field
+                label="Primary Image URL"
+                value={form.imageUrl}
+                onChange={(v) => setForm((s) => ({ ...s, imageUrl: v }))}
+              />
               <Field
                 label="Gallery URLs (comma separated)"
                 value={form.imageUrlsCsv}
@@ -660,7 +924,11 @@ export default function OwnerProductsPage() {
               </div>
 
               {!!form._id && (
-                <button className="op-danger" disabled={saving} onClick={() => deleteProduct({ _id: form._id, name: form.name })}>
+                <button
+                  className="op-danger"
+                  disabled={saving || uploadingImages}
+                  onClick={() => deleteProduct({ _id: form._id, name: form.name })}
+                >
                   Delete Product
                 </button>
               )}
@@ -849,11 +1117,13 @@ const styles = {
     inset: 0,
     background: "rgba(0,0,0,0.62)",
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "center",
     padding: 14,
     zIndex: 50,
     backdropFilter: "blur(6px)",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
   },
   modal: {
     width: "min(980px, 100%)",
@@ -863,6 +1133,10 @@ const styles = {
     background: "rgba(2,6,23,0.96)",
     overflow: "hidden",
     boxShadow: "0 30px 90px rgba(0,0,0,0.65)",
+
+    // ✅ critical for scroll behavior
+    display: "flex",
+    flexDirection: "column",
   },
   modalHeader: {
     display: "flex",
@@ -873,7 +1147,14 @@ const styles = {
     background: "rgba(2,6,23,0.92)",
   },
   modalTitle: { fontWeight: 900, letterSpacing: 0.8, textTransform: "uppercase" },
-  modalBody: { padding: 14, overflow: "auto" },
+
+  modalBody: {
+    padding: 14,
+    flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    overscrollBehavior: "contain",
+  },
 
   field: { marginBottom: 12 },
   label: {
@@ -1047,7 +1328,7 @@ function css() {
     border-radius: 999px;
     display:flex;
     align-items:center;
-    justify-content:center;
+    justifyContent:center;
     font-weight: 900;
     background: rgba(56,189,248,0.16);
     border: 1px solid rgba(129,140,248,0.6);
