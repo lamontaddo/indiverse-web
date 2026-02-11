@@ -1,3 +1,4 @@
+// This is the Flowers Consultation Page!!!
 // src/pages/FlowerOrdersPage.jsx ✅ FULL DROP-IN (WEB)
 // Route: /world/:profileKey/consultation
 //
@@ -268,7 +269,7 @@ export default function FlowerOrdersPage() {
               ) : (
                 <span />
               )}
-              <span className="fo-smallRight">profileKey: {profileKey}</span>
+              {/* <span className="fo-smallRight">profileKey: {profileKey}</span> */}
             </div>
           </div>
         </div>
