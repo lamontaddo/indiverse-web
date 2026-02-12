@@ -133,9 +133,7 @@ export default function ProductsPage() {
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
 
-          <Link to={`/world/${profileKey}`} style={styles.link}>
-            Return to {profileKey}
-          </Link>
+     
         </div>
 
         {loading ? (
