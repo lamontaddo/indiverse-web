@@ -259,15 +259,6 @@ export default function PlaylistPage() {
               <div className="pl-titleBig">Now Playing</div>
               <div className="pl-subline">
                 <span className="pl-dot">{ownerName}</span>
-               
-                {lastUpdated ? (
-                  <>
-                    <span className="pl-dot">•</span>
-                    <span className="pl-dot" style={{ opacity: 0.75 }}>
-                      {lastUpdated}
-                    </span>
-                  </>
-                ) : null}
               </div>
               {errorNote ? <div className="pl-error">Note: {errorNote}</div> : null}
             </div>
