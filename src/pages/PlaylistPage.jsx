@@ -254,9 +254,9 @@ export default function PlaylistPage() {
         {/* header */}
         <div className="pl-topRow">
           <div>
-            <div className="pl-kicker">PLAYLIST</div>
+          
             <div className="pl-titleRow">
-              <div className="pl-titleBig">Now Playing</div>
+              <div className="pl-titleBig">PLAYLIST</div>
               <div className="pl-subline">
                 <span className="pl-dot">{ownerName}</span>
               </div>
