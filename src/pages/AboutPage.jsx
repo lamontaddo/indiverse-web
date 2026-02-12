@@ -309,7 +309,6 @@ export default function AboutPage() {
             </div>
           </div>
 
-          <div className="ap-hint">Tip: switch tabs and come back — this page refetches automatically.</div>
         </main>
       </div>
 
