@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 
 const FALLBACK_TEXT = `
-Hey — welcome to IndiVerse.
+Hey — Welcome to indiVerse.
 
 This creator hasn’t added an About section yet.
 But you can still explore what’s live right now: music, products, and updates.
