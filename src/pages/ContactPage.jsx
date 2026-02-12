@@ -428,7 +428,7 @@ export default function ContactPage() {
         <div style={styles.topBar}>
           <div style={styles.topLeft}>
             <div style={styles.pillTitle}>{headerTitle}</div>
-            <div style={styles.pillSub}>Phonebook + optional identity binding</div>
+            
           </div>
 
           <div style={styles.topActions}>
@@ -625,9 +625,7 @@ export default function ContactPage() {
           />
         </div>
 
-        <div style={styles.footer}>
-          Tip: This page inherits the world background so it feels like you never left.
-        </div>
+      
       </div>
     </div>
   );
