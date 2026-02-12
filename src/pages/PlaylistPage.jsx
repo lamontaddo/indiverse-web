@@ -259,10 +259,7 @@ export default function PlaylistPage() {
               <div className="pl-titleBig">Now Playing</div>
               <div className="pl-subline">
                 <span className="pl-dot">{ownerName}</span>
-                <span className="pl-dot">•</span>
-                <span className="pl-dot">{profileKey}</span>
-                <span className="pl-dot">•</span>
-                <span className="pl-dot">{loadedFrom || 'public'}</span>
+               
                 {lastUpdated ? (
                   <>
                     <span className="pl-dot">•</span>
