@@ -262,11 +262,7 @@ export default function AboutPage() {
             </div>
 
             <div className="ap-metaRow">
-              {updatedLabel ? (
-                <div className="ap-meta">Updated: {updatedLabel}</div>
-              ) : (
-                <div className="ap-meta ap-metaDim">—</div>
-              )}
+             
 
               {loading ? <span className="ap-pill ap-pillInfo">Fetching…</span> : null}
               {refreshing ? <span className="ap-pill ap-pillInfo">Refreshing…</span> : null}
