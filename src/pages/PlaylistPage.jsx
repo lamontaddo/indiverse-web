@@ -349,9 +349,7 @@ export default function PlaylistPage() {
           </div>
         )}
 
-        <div className="pl-footnote">
-          Tip: This is a public playlist — “Open” will deep-link to Spotify only if <code>spotifyUrl</code> exists.
-        </div>
+      
       </div>
 
       <style>{`
