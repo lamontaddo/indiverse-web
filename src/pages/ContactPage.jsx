@@ -1,4 +1,4 @@
-// src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + selfie upload
+// src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + selfie upload (camera OR device upload)
 // Route suggestion: /world/:profileKey/contact
 //
 // ✅ Visual: full-bleed world bg (passed via navigation state bgUrl), glass shell, chat bubbles
@@ -7,12 +7,12 @@
 // ✅ Optional "This is me" device binding for chat identity (localStorage keys)
 // ✅ Works with Vite proxy OR VITE_API_BASE_URL
 //
-// NOTE (important):
-// - Browsers can’t directly open the camera the way Expo does; we use <input type="file">.
-// - If you want to upload selfie to S3 later, we can switch to multipart + presign.
-// - Right now we send selfieUrl as a local object URL (same spirit as RN using selfie.uri).
-//   Backend can store it, but it won’t be accessible from other devices.
-//   For now it’s fine as a “recognize me on this device” helper.
+// ✅ UPDATE (this drop-in):
+// - Selfie step offers BOTH:
+//    1) 📷 Take Selfie (mobile camera hint via capture="user")
+//    2) 🖼 Upload From Device (photo library / file picker)
+// - Both inputs share the same onFileChange handler
+// - onFileChange clears input value so picking the same file twice still works
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -82,7 +82,15 @@ async function apiJson(path, { profileKey, method = 'GET', body } = {}) {
   });
 
   const text = await res.text().catch(() => '');
-  const json = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
+  const json = text
+    ? (() => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      })()
+    : null;
 
   if (!res.ok) {
     const msg =
@@ -134,15 +142,26 @@ function Chip({ children, onClick, variant = 'ghost', disabled, title }) {
       userSelect: 'none',
     },
     ghost: { background: 'rgba(255,255,255,0.08)', color: '#fff' },
-    primary: { background: 'rgba(255,255,255,0.85)', color: '#000', border: '1px solid rgba(255,255,255,0.24)' },
-    danger: { background: 'rgba(239,68,68,0.14)', color: '#fecaca', border: '1px solid rgba(239,68,68,0.25)' },
+    primary: {
+      background: 'rgba(255,255,255,0.85)',
+      color: '#000',
+      border: '1px solid rgba(255,255,255,0.24)',
+    },
+    danger: {
+      background: 'rgba(239,68,68,0.14)',
+      color: '#fecaca',
+      border: '1px solid rgba(239,68,68,0.25)',
+    },
   };
 
   return (
     <button
       title={title}
       onClick={disabled ? undefined : onClick}
-      style={{ ...styles.base, ...(variant === 'primary' ? styles.primary : variant === 'danger' ? styles.danger : styles.ghost) }}
+      style={{
+        ...styles.base,
+        ...(variant === 'primary' ? styles.primary : variant === 'danger' ? styles.danger : styles.ghost),
+      }}
     >
       {children}
     </button>
@@ -194,7 +213,10 @@ export default function ContactPage() {
   const [errorNote, setErrorNote] = useState('');
 
   const scrollRef = useRef(null);
-  const fileRef = useRef(null);
+
+  // ✅ two refs: camera vs upload
+  const fileCameraRef = useRef(null);
+  const fileUploadRef = useRef(null);
 
   // cleanup object URL
   useEffect(() => {
@@ -206,38 +228,38 @@ export default function ContactPage() {
   const baseMessages = useMemo(() => {
     const m = [
       { role: 'ai', text: `Hey — I’m ${ownerName}’s assistant.` },
-      { role: 'ai', text: `Let's add  a new contact in ${ownerName}’s phone book.` },
+      { role: 'ai', text: `Let’s add a new contact to ${ownerName}’s phone book. (We won’t message them.)` },
       { role: 'ai', text: `Add anyone you want, or connect yourself so ${ownerName} recognizes you.` },
     ];
-  
+
     if (!first && !last) {
       m.push({ role: 'ai', text: 'Who are we adding? Enter their first and last name.' });
       return m;
     }
-  
+
     m.push({ role: 'user', text: `${first} ${last}`.trim() });
-  
+
     if (!phone) {
       m.push({ role: 'ai', text: "Got it — what’s their phone number?" });
       return m;
     }
-  
+
     m.push({ role: 'user', text: formatPhonePretty(phone) });
-  
+
     if (step === 2 && !address) return m;
     m.push({ role: 'user', text: address ? address : '(No address)' });
-  
+
     if (step === 3 && !note) return m;
     m.push({ role: 'user', text: note ? note : '(No note)' });
-  
+
     if (step < 5) return m;
-  
+
     m.push({ role: 'user', text: selfieObjUrl ? '(Selfie added)' : '(No selfie)' });
     m.push({ role: 'ai', text: 'Confirm the details below — then we’ll save this contact.' });
-  
+
     return m;
   }, [ownerName, first, last, phone, address, note, selfieObjUrl, step]);
-  
+
   // auto-scroll
   useEffect(() => {
     const el = scrollRef.current;
@@ -303,30 +325,47 @@ export default function ContactPage() {
     setStep(4);
   }, []);
 
-  const pickSelfie = useCallback(() => {
+  // ✅ two pickers: camera vs upload
+  const pickSelfieCamera = useCallback(() => {
     setErrorNote('');
-    fileRef.current?.click?.();
+    fileCameraRef.current?.click?.();
   }, []);
 
-  const onFileChange = useCallback((e) => {
-    const f = e?.target?.files?.[0];
-    if (!f) return;
+  const pickSelfieUpload = useCallback(() => {
+    setErrorNote('');
+    fileUploadRef.current?.click?.();
+  }, []);
 
-    // revoke previous
-    try {
-      if (selfieObjUrl) URL.revokeObjectURL(selfieObjUrl);
-    } catch {}
+  const onFileChange = useCallback(
+    (e) => {
+      const f = e?.target?.files?.[0];
 
-    const url = URL.createObjectURL(f);
-    setSelfieObjUrl(url);
-    setSelfieFileName(f.name || 'selfie.jpg');
-    setStep(5);
-  }, [selfieObjUrl]);
+      // ✅ allow picking same file again
+      try {
+        e.target.value = '';
+      } catch {}
+
+      if (!f) return;
+
+      // revoke previous
+      try {
+        if (selfieObjUrl) URL.revokeObjectURL(selfieObjUrl);
+      } catch {}
+
+      const url = URL.createObjectURL(f);
+      setSelfieObjUrl(url);
+      setSelfieFileName(f.name || 'selfie.jpg');
+      setStep(5);
+    },
+    [selfieObjUrl]
+  );
 
   const skipSelfie = useCallback(() => {
     setErrorNote('');
     if (selfieObjUrl) {
-      try { URL.revokeObjectURL(selfieObjUrl); } catch {}
+      try {
+        URL.revokeObjectURL(selfieObjUrl);
+      } catch {}
     }
     setSelfieObjUrl('');
     setSelfieFileName('');
@@ -380,16 +419,12 @@ export default function ContactPage() {
         } catch {}
       }
 
-      // nice UX: toast-ish
       setErrorNote('');
-      alert(
-        setAsMe
-          ? 'Saved + connected. You can open Direct Line now.'
-          : `Saved to ${ownerName}’s contact list.`
-      );
+      alert(setAsMe ? 'Saved + connected. You can open Direct Line now.' : `Saved to ${ownerName}’s contact list.`);
 
-      // go back to world
-      navigate(`/world/${encodeURIComponent(activeProfileKey)}`, { state: { profileKey: activeProfileKey, bgUrl } });
+      navigate(`/world/${encodeURIComponent(activeProfileKey)}`, {
+        state: { profileKey: activeProfileKey, bgUrl },
+      });
     } catch (err) {
       setErrorNote(String(err?.message || 'Failed to save contact.'));
     } finally {
@@ -428,14 +463,10 @@ export default function ContactPage() {
         <div style={styles.topBar}>
           <div style={styles.topLeft}>
             <div style={styles.pillTitle}>{headerTitle}</div>
-            
           </div>
 
           <div style={styles.topActions}>
-            <Chip
-              onClick={() => navigate(-1)}
-              title="Close"
-            >
+            <Chip onClick={() => navigate(-1)} title="Close">
               ✕ Close
             </Chip>
           </div>
@@ -476,11 +507,15 @@ export default function ContactPage() {
               </Bubble>
             )}
 
+            {/* ✅ selfie step: camera OR upload */}
             {step === 4 && !selfieObjUrl && (
               <Bubble role="ai">
-                <div style={{ color: '#fff' }}>{`Do you want to add a selfie so ${ownerName} recognizes you?`}</div>
+                <div style={{ color: '#fff' }}>{`Do you want to add a selfie so ${ownerName} recognizes you? (optional)`}</div>
                 <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <Chip variant="primary" onClick={pickSelfie}>📷 Add Selfie</Chip>
+                  <Chip variant="primary" onClick={pickSelfieCamera}>
+                    📷 Take Selfie
+                  </Chip>
+                  <Chip onClick={pickSelfieUpload}>🖼 Upload From Device</Chip>
                   <Chip onClick={skipSelfie}>Skip</Chip>
                 </div>
               </Bubble>
@@ -494,7 +529,7 @@ export default function ContactPage() {
                     <div style={styles.confirmHint}>You can edit any field before saving.</div>
                   </div>
 
-                  <div style={styles.grid}>
+                  <div style={styles.grid} className="_contact_grid_fix">
                     <div style={styles.block}>
                       <div style={styles.blockLabel}>Name</div>
                       <div style={styles.blockValue}>{`${first} ${last}`.trim()}</div>
@@ -550,7 +585,12 @@ export default function ContactPage() {
                   </div>
 
                   {/* identity toggle */}
-                  <div style={styles.meToggle} onClick={() => setSetAsMe((v) => !v)} role="button" tabIndex={0}>
+                  <div
+                    style={styles.meToggle}
+                    onClick={() => setSetAsMe((v) => !v)}
+                    role="button"
+                    tabIndex={0}
+                  >
                     <div style={styles.checkbox}>{setAsMe ? '☑' : '☐'}</div>
                     <div style={{ flex: 1 }}>
                       <div style={styles.meTitle}>This is me (enable Direct Line on this device)</div>
@@ -559,7 +599,13 @@ export default function ContactPage() {
                   </div>
 
                   <div style={styles.confirmActions}>
-                    <Chip onClick={() => navigate(`/world/${encodeURIComponent(activeProfileKey)}`, { state: { profileKey: activeProfileKey, bgUrl } })}>
+                    <Chip
+                      onClick={() =>
+                        navigate(`/world/${encodeURIComponent(activeProfileKey)}`, {
+                          state: { profileKey: activeProfileKey, bgUrl },
+                        })
+                      }
+                    >
                       ← Back
                     </Chip>
                     <Chip variant="primary" disabled={saving} onClick={confirmAndSend} title="Save Contact">
@@ -567,11 +613,7 @@ export default function ContactPage() {
                     </Chip>
                   </div>
 
-                  {!!errorNote && (
-                    <div style={styles.errorNote}>
-                      {errorNote}
-                    </div>
-                  )}
+                  {!!errorNote && <div style={styles.errorNote}>{errorNote}</div>}
                 </div>
               </div>
             )}
@@ -603,29 +645,40 @@ export default function ContactPage() {
               <div style={styles.composerHint}>
                 <span style={{ opacity: 0.75 }}>{composer.hint}</span>
                 {step === 2 && <span style={{ opacity: 0.75 }}> • or </span>}
-                {step === 2 && <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={skipAddress}>Skip address</span>}
+                {step === 2 && (
+                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={skipAddress}>
+                    Skip address
+                  </span>
+                )}
                 {step === 3 && <span style={{ opacity: 0.75 }}> • or </span>}
-                {step === 3 && <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={skipNote}>Skip note</span>}
+                {step === 3 && (
+                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={skipNote}>
+                    Skip note
+                  </span>
+                )}
               </div>
 
-              {!!errorNote && step < 5 && (
-                <div style={styles.errorInline}>{errorNote}</div>
-              )}
+              {!!errorNote && step < 5 && <div style={styles.errorInline}>{errorNote}</div>}
             </div>
           )}
 
-          {/* file input hidden */}
+          {/* ✅ hidden file inputs: camera + upload */}
           <input
-            ref={fileRef}
+            ref={fileCameraRef}
             type="file"
             accept="image/*"
             capture="user"
             style={{ display: 'none' }}
             onChange={onFileChange}
           />
+          <input
+            ref={fileUploadRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={onFileChange}
+          />
         </div>
-
-      
       </div>
     </div>
   );
