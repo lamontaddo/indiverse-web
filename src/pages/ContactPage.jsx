@@ -206,37 +206,38 @@ export default function ContactPage() {
   const baseMessages = useMemo(() => {
     const m = [
       { role: 'ai', text: `Hey — I’m ${ownerName}’s assistant.` },
-      { role: 'ai', text: `Add anyone you want. Or connect yourself so ${ownerName} recognizes you.` },
+      { role: 'ai', text: `Let's add  a new contact in ${ownerName}’s phone book.` },
+      { role: 'ai', text: `Add anyone you want, or connect yourself so ${ownerName} recognizes you.` },
     ];
-
+  
     if (!first && !last) {
-      m.push({ role: 'ai', text: 'Who are we adding? Enter first and last name.' });
+      m.push({ role: 'ai', text: 'Who are we adding? Enter their first and last name.' });
       return m;
     }
-
+  
     m.push({ role: 'user', text: `${first} ${last}`.trim() });
-
+  
     if (!phone) {
       m.push({ role: 'ai', text: "Got it — what’s their phone number?" });
       return m;
     }
-
+  
     m.push({ role: 'user', text: formatPhonePretty(phone) });
-
+  
     if (step === 2 && !address) return m;
     m.push({ role: 'user', text: address ? address : '(No address)' });
-
+  
     if (step === 3 && !note) return m;
     m.push({ role: 'user', text: note ? note : '(No note)' });
-
+  
     if (step < 5) return m;
-
+  
     m.push({ role: 'user', text: selfieObjUrl ? '(Selfie added)' : '(No selfie)' });
-    m.push({ role: 'ai', text: 'Confirm the details below.' });
-
+    m.push({ role: 'ai', text: 'Confirm the details below — then we’ll save this contact.' });
+  
     return m;
   }, [ownerName, first, last, phone, address, note, selfieObjUrl, step]);
-
+  
   // auto-scroll
   useEffect(() => {
     const el = scrollRef.current;
