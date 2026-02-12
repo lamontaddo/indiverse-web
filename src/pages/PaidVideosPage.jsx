@@ -106,7 +106,8 @@ export default function PaidVideosPage() {
   const nav = useNavigate();
   const params = useParams();
 
-  const profileKey = String(params.profileKey || "lamont").toLowerCase();
+  const profileKey = String(params.profileKey || "").trim().toLowerCase();
+
   const profile = useMemo(() => getProfileByKey(profileKey), [profileKey]);
 
   const [loading, setLoading] = useState(true);
@@ -206,7 +207,7 @@ export default function PaidVideosPage() {
     [nav, profileKey]
   );
 
-  const titleLine = profile?.label ? `${profile.label} • ${profileKey}` : profileKey;
+  const titleLine = profile?.label || "";
 
   const stats = useMemo(() => {
     let preview = 0;
