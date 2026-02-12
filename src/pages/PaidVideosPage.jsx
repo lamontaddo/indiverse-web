@@ -248,7 +248,7 @@ export default function PaidVideosPage() {
           <div className="pv-titleBlock">
             <div className="pv-h1">Content</div>
             <div className="pv-h2" title={titleLine}>
-              {titleLine}
+             
             </div>
 
             <div className="pv-stats">
