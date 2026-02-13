@@ -1,4 +1,4 @@
-// src/pages/OwnerContactsPage.jsx ✅ FULL DROP-IN (Web) — HARDENED
+// src/pages/OwnerContactsPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + FIXED API BASE
 // Route: /world/:profileKey/owner/contacts
 //
 // Uses:
@@ -11,21 +11,28 @@
 // ✅ 401/403 redirects to OwnerLogin
 // ✅ res.ok checks everywhere
 // ✅ Search + expand/collapse + refresh
-// ✅ tel:/sms: actions (browser will hand off if supported)
-// ✅ Selfie image preview if selfieUrl exists
-//
-// Notes:
-// - FaceTime is iOS-only; on web we show it only if user-agent is Apple AND facetime: works.
-// - Chat button navigates to a web route you can wire:
-//     /world/:profileKey/owner/messages  (recommended)
-//   If you later build /owner/chat, swap the navigate target.
+// ✅ tel:/sms: actions
+// ✅ Selfie preview if selfieUrl is a real http(s) URL
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getProfileByKey } from "../services/profileRegistry";
 
+/* ----------------------------- helpers ----------------------------- */
+
 function normalizePk(v) {
   return String(v || "").trim().toLowerCase();
+}
+
+function cleanBase(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+// ✅ IMPORTANT: make sure web hits backend, not same-origin.
+// If VITE_API_BASE_URL is empty, it will call relative (works with Vite proxy in dev).
+function apiUrl(path) {
+  const base = cleanBase(import.meta.env.VITE_API_BASE_URL || "");
+  return base ? `${base}${path}` : path;
 }
 
 function getActiveProfileKeyWeb() {
@@ -42,8 +49,9 @@ function ownerTokenKey(profileKey) {
 
 function getOwnerToken(profileKey) {
   try {
+    const pk = normalizePk(profileKey);
     return (
-      localStorage.getItem(ownerTokenKey(profileKey)) ||
+      localStorage.getItem(ownerTokenKey(pk)) ||
       localStorage.getItem("ownerToken") ||
       ""
     );
@@ -60,19 +68,33 @@ async function readJsonSafe(res) {
   }
 }
 
-// ✅ web owner fetch (no throw, returns Response)
+// ✅ web owner fetch (returns Response)
 async function ownerFetchRawWeb(path, { profileKey, method = "GET", body } = {}) {
   const pk = normalizePk(profileKey);
   const token = getOwnerToken(pk);
 
-  const res = await fetch(path, {
+  const url = apiUrl(path);
+
+  const headers = {
+    Accept: "application/json",
+    "x-profile-key": pk,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+  };
+
+  const isGet = String(method).toUpperCase() === "GET";
+
+  const res = await fetch(url, {
     method,
     headers: {
-      "content-type": "application/json",
-      "x-profile-key": pk,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(isGet ? {} : { "Content-Type": "application/json" }),
+      ...headers,
     },
-    body,
+    credentials: "include",
+    ...(body !== undefined
+      ? { body: typeof body === "string" ? body : JSON.stringify(body) }
+      : {}),
   });
 
   return res;
@@ -107,6 +129,8 @@ function safeOpenHref(href) {
   }
 }
 
+/* ----------------------------- component ----------------------------- */
+
 export default function OwnerContactsPage() {
   const navigate = useNavigate();
   const params = useParams();
@@ -114,9 +138,11 @@ export default function OwnerContactsPage() {
 
   const routeProfileKey = normalizePk(params?.profileKey);
   const storedProfileKey = getActiveProfileKeyWeb();
+
+  // ✅ NO fallback. Only route param OR localStorage.
   const resolvedKey = routeProfileKey || storedProfileKey || "";
 
-  const [profileKey, setProfileKey] = useState(resolvedKey || "");
+  const [profileKey, setProfileKey] = useState(resolvedKey);
   const [profileReady, setProfileReady] = useState(false);
 
   const bgUrl = location?.state?.bgUrl || null;
@@ -134,6 +160,14 @@ export default function OwnerContactsPage() {
   const inFlightRef = useRef(false);
 
   const canUseApi = useMemo(() => !!profileKey, [profileKey]);
+
+  // ✅ keep localStorage aligned when route param is present
+  useEffect(() => {
+    if (!routeProfileKey) return;
+    try {
+      localStorage.setItem("profileKey", routeProfileKey);
+    } catch {}
+  }, [routeProfileKey]);
 
   const goOwnerLogin = useCallback(
     (key) => {
@@ -165,6 +199,7 @@ export default function OwnerContactsPage() {
         if (!mounted) return;
 
         setProfileKey(next || "");
+
         if (!next) {
           setOwnerLabel("Owner");
           setAccent("#818cf8");
@@ -223,7 +258,9 @@ export default function OwnerContactsPage() {
         }
 
         if (!res.ok || data?.ok === false) {
-          throw new Error(data?.error || data?.message || "Failed to load contacts.");
+          const msg = data?.error || data?.message || "Failed to load contacts.";
+          // helpful debug for web deployments
+          throw new Error(`${msg} (status ${res.status}) @ ${apiUrl("/api/owner/contacts")}`);
         }
 
         const arr = Array.isArray(data)
@@ -280,26 +317,12 @@ export default function OwnerContactsPage() {
     setExpandedId((prev) => (prev === key ? null : key));
   };
 
-  const openCall = (phone) => {
-    if (!phone) return;
-    safeOpenHref(`tel:${phone}`);
-  };
-
-  const openSms = (phone) => {
-    if (!phone) return;
-    safeOpenHref(`sms:${phone}`);
-  };
-
-  const openFaceTime = (phoneOrEmail) => {
-    if (!phoneOrEmail) return;
-    // browser support varies; still try on Apple devices
-    safeOpenHref(`facetime:${phoneOrEmail}`);
-  };
+  const openCall = (phone) => phone && safeOpenHref(`tel:${phone}`);
+  const openSms = (phone) => phone && safeOpenHref(`sms:${phone}`);
+  const openFaceTime = (phoneOrEmail) => phoneOrEmail && safeOpenHref(`facetime:${phoneOrEmail}`);
 
   const goOwnerMessages = (contact) => {
     if (!profileKey) return;
-
-    // ✅ recommended: route your chat/messages here (build it when ready)
     navigate(`/world/${encodeURIComponent(profileKey)}/owner/messages`, {
       state: { profileKey, bgUrl, contact, contactId: contact?._id || contact?.id || null },
     });
@@ -461,28 +484,27 @@ export default function OwnerContactsPage() {
                       </div>
                     ) : null}
 
-{(() => {
-  const u = String(c.selfieUrl || "").trim();
-  const ok = /^https?:\/\//i.test(u);
-  if (!ok) return null;
+                    {(() => {
+                      const u = String(c.selfieUrl || "").trim();
+                      const ok = /^https?:\/\//i.test(u);
+                      if (!ok) return null;
 
-  return (
-    <div style={{ marginTop: 12 }}>
-      <div style={styles.expandedLabel}>Selfie</div>
-      <img
-        src={u}
-        alt="selfie"
-        style={styles.selfieImage}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        onError={(e) => {
-          e.currentTarget.style.display = "none";
-        }}
-      />
-    </div>
-  );
-})()}
-
+                      return (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={styles.expandedLabel}>Selfie</div>
+                          <img
+                            src={u}
+                            alt="selfie"
+                            style={styles.selfieImage}
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : null}
               </div>
@@ -493,6 +515,8 @@ export default function OwnerContactsPage() {
     </div>
   );
 }
+
+/* ----------------------------- styles ----------------------------- */
 
 const styles = {
   page: (accent) => ({
@@ -608,7 +632,14 @@ const styles = {
     letterSpacing: 0.8,
     flex: "0 0 auto",
   },
-  cardName: { color: "#fff", fontWeight: 900, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  cardName: {
+    color: "#fff",
+    fontWeight: 900,
+    fontSize: 15,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   cardPhone: { color: "#cfd3dc", fontSize: 13, marginTop: 2 },
   cardNote: { color: "#9ea4b5", fontSize: 11, marginTop: 2 },
 
