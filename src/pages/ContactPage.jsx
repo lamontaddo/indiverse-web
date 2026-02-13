@@ -1,24 +1,25 @@
-// src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + selfie upload (camera OR device upload)
+// src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + S3 selfie upload (camera OR device upload)
 // Route suggestion: /world/:profileKey/contact
 //
 // ✅ Visual: full-bleed world bg (passed via navigation state bgUrl), glass shell, chat bubbles
 // ✅ Steps: name -> phone -> address (skip) -> note (skip) -> selfie (skip) -> confirm/save
-// ✅ Uses your backend: POST /api/contacts  (profileKey REQUIRED via x-profile-key)
+// ✅ Uses backend:
+//    - POST /api/contacts/sign-selfie-upload  (presign)
+//    - PUT  <putUrl>                         (upload to S3)
+//    - POST /api/contacts                    (save contact with selfieUrl=https...)
+// ✅ Sends x-profile-key header (profileKey REQUIRED)
 // ✅ Optional "This is me" device binding for chat identity (localStorage keys)
-// ✅ Works with Vite proxy OR VITE_API_BASE_URL
+// ✅ Works with VITE_API_BASE_URL (recommended). If empty, it will call relative /api/*
 //
-// ✅ UPDATE (this drop-in):
-// - Selfie step offers BOTH:
-//    1) 📷 Take Selfie (mobile camera hint via capture="user")
-//    2) 🖼 Upload From Device (photo library / file picker)
-// - Both inputs share the same onFileChange handler
-// - onFileChange clears input value so picking the same file twice still works
+// IMPORTANT:
+// - We NEVER store blob: in Mongo. blob is only for preview.
+// - We store the File in state, upload it on Save, then persist https fileUrl.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 const FALLBACK_BG =
-  'https://images.unsplash.com/photo-1520975682071-a4a3a8a92dd7?auto=format&fit=crop&w=1600&q=60'; // only if nothing passed
+  'https://images.unsplash.com/photo-1520975682071-a4a3a8a92dd7?auto=format&fit=crop&w=1600&q=60';
 
 function cleanKey(v) {
   return String(v || '').trim().toLowerCase();
@@ -31,6 +32,7 @@ function resolveProfileKeyWeb(paramsProfileKey) {
     const saved = cleanKey(localStorage.getItem('profileKey'));
     if (saved) return saved;
   } catch {}
+  // NOTE: keeping your fallback behavior here. If you want "no fallback", change this to '' and block UI.
   return 'lamont';
 }
 
@@ -64,9 +66,13 @@ function formatPhonePretty(v) {
   return `(${a}) ${b}-${c}${d.length > 10 ? ` +${d.slice(10)}` : ''}`;
 }
 
+function cleanBase(url) {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
+
 async function apiJson(path, { profileKey, method = 'GET', body } = {}) {
-  const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
-  const url = `${base}${path}`;
+  const base = cleanBase(import.meta.env.VITE_API_BASE_URL || '');
+  const url = base ? `${base}${path}` : path; // ✅ if no env, use relative (vite proxy)
 
   const res = await fetch(url, {
     method,
@@ -126,7 +132,7 @@ function Bubble({ role, children }) {
 }
 
 function Chip({ children, onClick, variant = 'ghost', disabled, title }) {
-  const styles = {
+  const chipStyles = {
     base: {
       borderRadius: 999,
       padding: '8px 12px',
@@ -159,8 +165,8 @@ function Chip({ children, onClick, variant = 'ghost', disabled, title }) {
       title={title}
       onClick={disabled ? undefined : onClick}
       style={{
-        ...styles.base,
-        ...(variant === 'primary' ? styles.primary : variant === 'danger' ? styles.danger : styles.ghost),
+        ...chipStyles.base,
+        ...(variant === 'primary' ? chipStyles.primary : variant === 'danger' ? chipStyles.danger : chipStyles.ghost),
       }}
     >
       {children}
@@ -200,8 +206,11 @@ export default function ContactPage() {
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [note, setNote] = useState('');
+
+  // selfie state: preview (blob) + file (real)
   const [selfieObjUrl, setSelfieObjUrl] = useState('');
   const [selfieFileName, setSelfieFileName] = useState('');
+  const [selfieFile, setSelfieFile] = useState(null); // ✅ NEW
 
   // device identity toggle
   const [setAsMe, setSetAsMe] = useState(() => (location?.state?.mode === 'connect' ? true : false));
@@ -214,21 +223,25 @@ export default function ContactPage() {
 
   const scrollRef = useRef(null);
 
-  // ✅ two refs: camera vs upload
+  // two refs: camera vs upload
   const fileCameraRef = useRef(null);
   const fileUploadRef = useRef(null);
 
   // cleanup object URL
   useEffect(() => {
     return () => {
-      if (selfieObjUrl) URL.revokeObjectURL(selfieObjUrl);
+      if (selfieObjUrl) {
+        try {
+          URL.revokeObjectURL(selfieObjUrl);
+        } catch {}
+      }
     };
   }, [selfieObjUrl]);
 
   const baseMessages = useMemo(() => {
     const m = [
       { role: 'ai', text: `Hey — I’m ${ownerName}’s assistant.` },
-      { role: 'ai', text: `Let’s add a new contact to ${ownerName}’s phone book. (We won’t message them.)` },
+      { role: 'ai', text: `Let’s add a new contact to ${ownerName}’s phone book.` },
       { role: 'ai', text: `Add anyone you want, or connect yourself so ${ownerName} recognizes you.` },
     ];
 
@@ -325,7 +338,7 @@ export default function ContactPage() {
     setStep(4);
   }, []);
 
-  // ✅ two pickers: camera vs upload
+  // selfie step: camera OR upload
   const pickSelfieCamera = useCallback(() => {
     setErrorNote('');
     fileCameraRef.current?.click?.();
@@ -353,6 +366,8 @@ export default function ContactPage() {
       } catch {}
 
       const url = URL.createObjectURL(f);
+
+      setSelfieFile(f); // ✅ NEW
       setSelfieObjUrl(url);
       setSelfieFileName(f.name || 'selfie.jpg');
       setStep(5);
@@ -367,6 +382,7 @@ export default function ContactPage() {
         URL.revokeObjectURL(selfieObjUrl);
       } catch {}
     }
+    setSelfieFile(null); // ✅ NEW
     setSelfieObjUrl('');
     setSelfieFileName('');
     setStep(5);
@@ -380,6 +396,35 @@ export default function ContactPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
+  // ✅ NEW: upload selfie to S3 via presign endpoint, return https URL
+  const uploadSelfieIfNeeded = useCallback(async () => {
+    if (!selfieFile) return '';
+
+    const sign = await apiJson('/api/contacts/sign-selfie-upload', {
+      profileKey: activeProfileKey,
+      method: 'POST',
+      body: {
+        contentType: selfieFile.type || 'image/jpeg',
+        filename: selfieFile.name || 'selfie.jpg',
+      },
+    });
+
+    const putUrl = sign?.putUrl;
+    const fileUrl = sign?.fileUrl;
+
+    if (!putUrl || !fileUrl) throw new Error('Sign upload missing putUrl/fileUrl');
+
+    const putRes = await fetch(putUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': selfieFile.type || 'image/jpeg' },
+      body: selfieFile,
+    });
+
+    if (!putRes.ok) throw new Error(`Selfie upload failed (${putRes.status})`);
+
+    return String(fileUrl);
+  }, [selfieFile, activeProfileKey]);
+
   const confirmAndSend = useCallback(async () => {
     setErrorNote('');
     if (!first || !last || !phone) {
@@ -390,13 +435,16 @@ export default function ContactPage() {
     try {
       setSaving(true);
 
+      // ✅ Upload selfie (if selected) and store REAL https URL in Mongo
+      const selfieUrl = await uploadSelfieIfNeeded();
+
       const payload = {
         firstName: first,
         lastName: last,
         phone: phone,
         address: address || '',
         note: note || '',
-        selfieUrl: selfieObjUrl || '',
+        selfieUrl: selfieUrl || '',
       };
 
       const json = await apiJson('/api/contacts', {
@@ -430,7 +478,19 @@ export default function ContactPage() {
     } finally {
       setSaving(false);
     }
-  }, [first, last, phone, address, note, selfieObjUrl, activeProfileKey, setAsMe, ownerName, navigate, bgUrl]);
+  }, [
+    first,
+    last,
+    phone,
+    address,
+    note,
+    activeProfileKey,
+    setAsMe,
+    ownerName,
+    navigate,
+    bgUrl,
+    uploadSelfieIfNeeded,
+  ]);
 
   const composer = useMemo(() => {
     const common = {
@@ -482,7 +542,6 @@ export default function ContactPage() {
               </Bubble>
             ))}
 
-            {/* optional step prompts */}
             {step === 2 && !address && (
               <Bubble role="ai">
                 <div style={{ color: '#fff' }}>Add an address? (optional)</div>
@@ -507,7 +566,6 @@ export default function ContactPage() {
               </Bubble>
             )}
 
-            {/* ✅ selfie step: camera OR upload */}
             {step === 4 && !selfieObjUrl && (
               <Bubble role="ai">
                 <div style={{ color: '#fff' }}>{`Do you want to add a selfie so ${ownerName} recognizes you? (optional)`}</div>
@@ -571,7 +629,9 @@ export default function ContactPage() {
                           <img src={selfieObjUrl} alt="selfie" style={styles.selfieImg} />
                           <div>
                             <div style={{ fontWeight: 800 }}>{selfieFileName || 'selfie'}</div>
-                            <div style={{ opacity: 0.75, fontSize: 12 }}>Stored for this device unless you add uploads later.</div>
+                            <div style={{ opacity: 0.75, fontSize: 12 }}>
+                              This will be uploaded and saved to your account.
+                            </div>
                           </div>
                         </div>
                       ) : (
@@ -608,6 +668,7 @@ export default function ContactPage() {
                     >
                       ← Back
                     </Chip>
+
                     <Chip variant="primary" disabled={saving} onClick={confirmAndSend} title="Save Contact">
                       {saving ? 'Saving…' : '✓ Save Contact'}
                     </Chip>
@@ -619,7 +680,6 @@ export default function ContactPage() {
             )}
           </div>
 
-          {/* composer */}
           {composer && step < 4 && (
             <div style={styles.composerWrap}>
               <div style={styles.composer}>
@@ -662,7 +722,7 @@ export default function ContactPage() {
             </div>
           )}
 
-          {/* ✅ hidden file inputs: camera + upload */}
+          {/* hidden file inputs: camera + upload */}
           <input
             ref={fileCameraRef}
             type="file"
@@ -736,7 +796,6 @@ const styles = {
     alignItems: 'center',
     gap: 10,
   },
-  pillSub: { color: '#cfd3dc', fontSize: 12, letterSpacing: 0.5 },
 
   topActions: { display: 'flex', gap: 10, alignItems: 'center' },
 
@@ -893,11 +952,9 @@ const styles = {
     fontSize: 12,
     fontWeight: 800,
   },
-
-  footer: { marginTop: 10, fontSize: 11, color: '#94a3b8' },
 };
 
-/* responsive tweak (inline because we’re doing “no CSS file” drop-in) */
+// responsive tweak (inline because we’re doing “no CSS file” drop-in)
 const styleEl = document?.getElementById?.('contactpage-responsive-style');
 if (!styleEl && typeof document !== 'undefined') {
   const s = document.createElement('style');
