@@ -1,4 +1,4 @@
-// src/pages/OwnerContactsPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + FIXED API BASE
+// src/pages/OwnerContactsPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + FIXED API BASE + SELFIE AVATAR
 // Route: /world/:profileKey/owner/contacts
 //
 // Uses:
@@ -12,7 +12,7 @@
 // ✅ res.ok checks everywhere
 // ✅ Search + expand/collapse + refresh
 // ✅ tel:/sms: actions
-// ✅ Selfie preview if selfieUrl is a real http(s) URL
+// ✅ Selfie avatar + cache-bust + visible onError diagnostics
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -129,6 +129,13 @@ function safeOpenHref(href) {
   }
 }
 
+function withCacheBust(url, seed) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  const join = u.includes("?") ? "&" : "?";
+  return `${u}${join}_cb=${encodeURIComponent(String(seed || Date.now()))}`;
+}
+
 /* ----------------------------- component ----------------------------- */
 
 export default function OwnerContactsPage() {
@@ -160,6 +167,12 @@ export default function OwnerContactsPage() {
   const inFlightRef = useRef(false);
 
   const canUseApi = useMemo(() => !!profileKey, [profileKey]);
+
+  // ✅ cache-bust seed so images refresh after uploads/refresh
+  const [cacheSeed, setCacheSeed] = useState(Date.now());
+
+  // ✅ image errors by contact key
+  const [imgErr, setImgErr] = useState({}); // { [contactKey]: 'message' }
 
   // ✅ keep localStorage aligned when route param is present
   useEffect(() => {
@@ -259,7 +272,6 @@ export default function OwnerContactsPage() {
 
         if (!res.ok || data?.ok === false) {
           const msg = data?.error || data?.message || "Failed to load contacts.";
-          // helpful debug for web deployments
           throw new Error(`${msg} (status ${res.status}) @ ${apiUrl("/api/owner/contacts")}`);
         }
 
@@ -270,6 +282,12 @@ export default function OwnerContactsPage() {
           : [];
 
         setContacts(arr);
+
+        // ✅ bump cache seed after fetch so selfies refresh
+        setCacheSeed(Date.now());
+
+        // ✅ clear old image errors on refresh
+        setImgErr({});
       } catch (err) {
         const msg = err?.message || "Failed to load contacts.";
         setError(msg);
@@ -412,10 +430,44 @@ export default function OwnerContactsPage() {
             const previewNote =
               c.note && c.note.length > 40 ? c.note.slice(0, 40) + "…" : c.note || "";
 
+            const rawSelfieUrl = String(c.selfieUrl || "").trim();
+            const hasSelfie = /^https?:\/\//i.test(rawSelfieUrl);
+            const selfieSrc = hasSelfie ? withCacheBust(rawSelfieUrl, cacheSeed) : "";
+
+            const errMsg = imgErr?.[key] || "";
+
             return (
               <div key={key} style={styles.card}>
                 <div style={styles.cardTopRow}>
-                  <div style={styles.avatarSquare}>{initials || "??"}</div>
+                  <div style={styles.avatarSquare}>
+                    {hasSelfie ? (
+                      <img
+                        src={selfieSrc}
+                        alt="selfie"
+                        style={styles.avatarImg}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        onError={() => {
+                          setImgErr((prev) => ({
+                            ...prev,
+                            [key]:
+                              "Image failed to load (likely S3 GetObject blocked for contacts/selfies).",
+                          }));
+                        }}
+                        onLoad={() => {
+                          if (imgErr?.[key]) {
+                            setImgErr((prev) => {
+                              const next = { ...prev };
+                              delete next[key];
+                              return next;
+                            });
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span>{initials || "??"}</span>
+                    )}
+                  </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={styles.cardName} title={displayName}>
@@ -430,6 +482,10 @@ export default function OwnerContactsPage() {
                       <div style={styles.cardNote} title={c.note || ""}>
                         {previewNote}
                       </div>
+                    ) : null}
+
+                    {hasSelfie ? (
+                      <div style={styles.hasSelfieTag}>selfieUrl ✓</div>
                     ) : null}
                   </div>
 
@@ -484,27 +540,46 @@ export default function OwnerContactsPage() {
                       </div>
                     ) : null}
 
-                    {(() => {
-                      const u = String(c.selfieUrl || "").trim();
-                      const ok = /^https?:\/\//i.test(u);
-                      if (!ok) return null;
+                    {hasSelfie ? (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={styles.expandedLabel}>Selfie</div>
 
-                      return (
-                        <div style={{ marginTop: 12 }}>
-                          <div style={styles.expandedLabel}>Selfie</div>
-                          <img
-                            src={u}
-                            alt="selfie"
-                            style={styles.selfieImage}
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              e.currentTarget.style.display = "none";
-                            }}
-                          />
+                        <div style={styles.selfieToolsRow}>
+                          <a style={styles.linkBtn} href={rawSelfieUrl} target="_blank" rel="noreferrer">
+                            Open selfieUrl
+                          </a>
+
+                          <button
+                            style={styles.linkBtn}
+                            onClick={() => setCacheSeed(Date.now())}
+                            title="Force refresh image"
+                          >
+                            Refresh image
+                          </button>
                         </div>
-                      );
-                    })()}
+
+                        {errMsg ? (
+                          <div style={styles.imgErrorText}>{errMsg}</div>
+                        ) : null}
+
+                        <img
+                          src={selfieSrc}
+                          alt="selfie"
+                          style={styles.selfieImage}
+                          loading="lazy"
+                          referrerPolicy="no-referrer"
+                          onError={() => {
+                            setImgErr((prev) => ({
+                              ...prev,
+                              [key]:
+                                "Image failed to load. Fix bucket policy: allow s3:GetObject on arn:aws:s3:::superappdb/contacts/selfies/*",
+                            }));
+                          }}
+                        />
+
+                        <div style={styles.urlTiny}>{rawSelfieUrl}</div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -618,6 +693,7 @@ const styles = {
   },
 
   cardTopRow: { display: "flex", alignItems: "flex-start", gap: 10 },
+
   avatarSquare: {
     width: 44,
     height: 44,
@@ -631,7 +707,15 @@ const styles = {
     fontWeight: 900,
     letterSpacing: 0.8,
     flex: "0 0 auto",
+    overflow: "hidden",
   },
+  avatarImg: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    display: "block",
+  },
+
   cardName: {
     color: "#fff",
     fontWeight: 900,
@@ -642,6 +726,7 @@ const styles = {
   },
   cardPhone: { color: "#cfd3dc", fontSize: 13, marginTop: 2 },
   cardNote: { color: "#9ea4b5", fontSize: 11, marginTop: 2 },
+  hasSelfieTag: { color: "#7dd3fc", fontSize: 11, marginTop: 6, fontWeight: 900 },
 
   expandBtn: {
     width: 34,
@@ -680,14 +765,40 @@ const styles = {
     cursor: "pointer",
   },
 
+  selfieToolsRow: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 },
+
+  linkBtn: {
+    borderRadius: 999,
+    padding: "8px 12px",
+    border: "1px solid rgba(148,163,184,0.65)",
+    background: "rgba(15,23,42,0.85)",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+    textDecoration: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+  },
+
+  imgErrorText: {
+    marginTop: 10,
+    color: "#ffb3b3",
+    fontSize: 12,
+    fontWeight: 900,
+  },
+
   selfieImage: {
-    marginTop: 8,
+    marginTop: 10,
     width: "100%",
     maxHeight: 360,
     objectFit: "cover",
     borderRadius: 12,
     border: "1px solid rgba(255,255,255,0.18)",
+    display: "block",
   },
+
+  urlTiny: { marginTop: 8, color: "#9ea4b5", fontSize: 11, wordBreak: "break-all" },
 
   center: { padding: 26, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 },
   emptyTitle: { color: "#fff", fontSize: 18, fontWeight: 900 },
