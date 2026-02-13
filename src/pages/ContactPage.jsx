@@ -1,11 +1,11 @@
 // src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + S3 selfie upload (camera OR device upload)
-// Route suggestion: /world/:profileKey/contact
+// Route: /world/:profileKey/contact
 //
 // ✅ Visual: full-bleed world bg (passed via navigation state bgUrl), glass shell, chat bubbles
 // ✅ Steps: name -> phone -> address (skip) -> note (skip) -> selfie (skip) -> confirm/save
 // ✅ Uses backend:
-//    - POST /api/contacts/sign-selfie-upload  (presign)
-//    - PUT  <putUrl>                         (upload to S3)
+//    - POST /api/contacts/sign-selfie-upload  (presign)  -> returns { putUrl, fileUrl, requiredHeaders }
+//    - PUT  <putUrl>                         (upload to S3 using requiredHeaders EXACTLY)
 //    - POST /api/contacts                    (save contact with selfieUrl=https...)
 // ✅ Sends x-profile-key header (profileKey REQUIRED)
 // ✅ Optional "This is me" device binding for chat identity (localStorage keys)
@@ -14,6 +14,7 @@
 // IMPORTANT:
 // - We NEVER store blob: in Mongo. blob is only for preview.
 // - We store the File in state, upload it on Save, then persist https fileUrl.
+// - ✅ NO 'lamont' fallback anymore: route param -> localStorage('profileKey') only. If missing, block UI.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -32,8 +33,8 @@ function resolveProfileKeyWeb(paramsProfileKey) {
     const saved = cleanKey(localStorage.getItem('profileKey'));
     if (saved) return saved;
   } catch {}
-  // NOTE: keeping your fallback behavior here. If you want "no fallback", change this to '' and block UI.
-  return 'lamont';
+  // ✅ hardened: no fallback
+  return '';
 }
 
 function capWords(s) {
@@ -72,7 +73,7 @@ function cleanBase(url) {
 
 async function apiJson(path, { profileKey, method = 'GET', body } = {}) {
   const base = cleanBase(import.meta.env.VITE_API_BASE_URL || '');
-  const url = base ? `${base}${path}` : path; // ✅ if no env, use relative (vite proxy)
+  const url = base ? `${base}${path}` : path;
 
   const res = await fetch(url, {
     method,
@@ -166,7 +167,11 @@ function Chip({ children, onClick, variant = 'ghost', disabled, title }) {
       onClick={disabled ? undefined : onClick}
       style={{
         ...chipStyles.base,
-        ...(variant === 'primary' ? chipStyles.primary : variant === 'danger' ? chipStyles.danger : chipStyles.ghost),
+        ...(variant === 'primary'
+          ? chipStyles.primary
+          : variant === 'danger'
+          ? chipStyles.danger
+          : chipStyles.ghost),
       }}
     >
       {children}
@@ -180,15 +185,16 @@ export default function ContactPage() {
   const location = useLocation();
 
   const activeProfileKey = useMemo(() => resolveProfileKeyWeb(paramsProfileKey), [paramsProfileKey]);
+  const hasProfileKey = !!activeProfileKey;
 
-  // keep storage aligned (like RN AsyncStorage usage)
+  // keep storage aligned
   useEffect(() => {
+    if (!activeProfileKey) return;
     try {
       localStorage.setItem('profileKey', activeProfileKey);
     } catch {}
   }, [activeProfileKey]);
 
-  // world background from MainScreen navigate state
   const bgUrl = useMemo(() => {
     const fromState = location?.state?.bgUrl;
     const v = typeof fromState === 'string' ? fromState.trim() : '';
@@ -207,10 +213,10 @@ export default function ContactPage() {
   const [address, setAddress] = useState('');
   const [note, setNote] = useState('');
 
-  // selfie state: preview (blob) + file (real)
+  // selfie state
   const [selfieObjUrl, setSelfieObjUrl] = useState('');
   const [selfieFileName, setSelfieFileName] = useState('');
-  const [selfieFile, setSelfieFile] = useState(null); // ✅ NEW
+  const [selfieFile, setSelfieFile] = useState(null);
 
   // device identity toggle
   const [setAsMe, setSetAsMe] = useState(() => (location?.state?.mode === 'connect' ? true : false));
@@ -222,8 +228,6 @@ export default function ContactPage() {
   const [errorNote, setErrorNote] = useState('');
 
   const scrollRef = useRef(null);
-
-  // two refs: camera vs upload
   const fileCameraRef = useRef(null);
   const fileUploadRef = useRef(null);
 
@@ -244,6 +248,15 @@ export default function ContactPage() {
       { role: 'ai', text: `Let’s add a new contact to ${ownerName}’s phone book.` },
       { role: 'ai', text: `Add anyone you want, or connect yourself so ${ownerName} recognizes you.` },
     ];
+
+    if (!hasProfileKey) {
+      m.push({
+        role: 'ai',
+        text:
+          'Missing profileKey. Open this page as /world/:profileKey/contact (or set localStorage("profileKey")).',
+      });
+      return m;
+    }
 
     if (!first && !last) {
       m.push({ role: 'ai', text: 'Who are we adding? Enter their first and last name.' });
@@ -271,7 +284,7 @@ export default function ContactPage() {
     m.push({ role: 'ai', text: 'Confirm the details below — then we’ll save this contact.' });
 
     return m;
-  }, [ownerName, first, last, phone, address, note, selfieObjUrl, step]);
+  }, [ownerName, first, last, phone, address, note, selfieObjUrl, step, hasProfileKey]);
 
   // auto-scroll
   useEffect(() => {
@@ -283,7 +296,6 @@ export default function ContactPage() {
     return () => window.clearTimeout(t);
   }, [baseMessages, step]);
 
-  // step actions
   const advanceName = useCallback(() => {
     setErrorNote('');
     if (!validName(input)) {
@@ -338,7 +350,6 @@ export default function ContactPage() {
     setStep(4);
   }, []);
 
-  // selfie step: camera OR upload
   const pickSelfieCamera = useCallback(() => {
     setErrorNote('');
     fileCameraRef.current?.click?.();
@@ -352,22 +363,19 @@ export default function ContactPage() {
   const onFileChange = useCallback(
     (e) => {
       const f = e?.target?.files?.[0];
-
-      // ✅ allow picking same file again
       try {
         e.target.value = '';
       } catch {}
 
       if (!f) return;
 
-      // revoke previous
       try {
         if (selfieObjUrl) URL.revokeObjectURL(selfieObjUrl);
       } catch {}
 
       const url = URL.createObjectURL(f);
 
-      setSelfieFile(f); // ✅ NEW
+      setSelfieFile(f);
       setSelfieObjUrl(url);
       setSelfieFileName(f.name || 'selfie.jpg');
       setStep(5);
@@ -382,7 +390,7 @@ export default function ContactPage() {
         URL.revokeObjectURL(selfieObjUrl);
       } catch {}
     }
-    setSelfieFile(null); // ✅ NEW
+    setSelfieFile(null);
     setSelfieObjUrl('');
     setSelfieFileName('');
     setStep(5);
@@ -396,7 +404,7 @@ export default function ContactPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
 
-  // ✅ NEW: upload selfie to S3 via presign endpoint, return https URL
+  // ✅ upload selfie using requiredHeaders from signer (matches app behavior)
   const uploadSelfieIfNeeded = useCallback(async () => {
     if (!selfieFile) return '';
 
@@ -411,22 +419,32 @@ export default function ContactPage() {
 
     const putUrl = sign?.putUrl;
     const fileUrl = sign?.fileUrl;
+    const requiredHeaders = sign?.requiredHeaders || {};
 
     if (!putUrl || !fileUrl) throw new Error('Sign upload missing putUrl/fileUrl');
 
+    // IMPORTANT: send exactly what server says must be signed.
+    // If requiredHeaders includes Content-Type, it MUST match.
     const putRes = await fetch(putUrl, {
       method: 'PUT',
-      headers: { 'Content-Type': selfieFile.type || 'image/jpeg' },
+      headers: { ...requiredHeaders },
       body: selfieFile,
     });
 
-    if (!putRes.ok) throw new Error(`Selfie upload failed (${putRes.status})`);
+    if (!putRes.ok) {
+      const txt = await putRes.text().catch(() => '');
+      throw new Error(`Selfie upload failed (${putRes.status}) ${txt ? `— ${txt.slice(0, 120)}` : ''}`);
+    }
 
     return String(fileUrl);
   }, [selfieFile, activeProfileKey]);
 
   const confirmAndSend = useCallback(async () => {
     setErrorNote('');
+    if (!hasProfileKey) {
+      setErrorNote('Missing profileKey.');
+      return;
+    }
     if (!first || !last || !phone) {
       setErrorNote('Missing required fields: name + phone.');
       return;
@@ -435,7 +453,6 @@ export default function ContactPage() {
     try {
       setSaving(true);
 
-      // ✅ Upload selfie (if selected) and store REAL https URL in Mongo
       const selfieUrl = await uploadSelfieIfNeeded();
 
       const payload = {
@@ -459,7 +476,6 @@ export default function ContactPage() {
 
       if (!createdId) throw new Error('Contact created but missing contact._id in response.');
 
-      // ✅ bind device identity only when toggle is ON
       if (setAsMe) {
         try {
           localStorage.setItem(`chatContactId:${activeProfileKey}`, String(createdId));
@@ -490,9 +506,12 @@ export default function ContactPage() {
     navigate,
     bgUrl,
     uploadSelfieIfNeeded,
+    hasProfileKey,
   ]);
 
   const composer = useMemo(() => {
+    if (!hasProfileKey) return null;
+
     const common = {
       value: input,
       onChange: (e) => setInput(e.target.value),
@@ -508,7 +527,7 @@ export default function ContactPage() {
     if (step === 2) return { ...common, icon: '📍', placeholder: 'Address (optional)', hint: 'Press Enter to save, or Skip', onSend: advanceAddress };
     if (step === 3) return { ...common, icon: '💬', placeholder: 'Tiny note (optional)', hint: 'Press Enter to save, or Skip', onSend: advanceNote };
     return null;
-  }, [step, input, advanceName, advancePhone, advanceAddress, advanceNote]);
+  }, [hasProfileKey, step, input, advanceName, advancePhone, advanceAddress, advanceNote]);
 
   const headerTitle = useMemo(() => {
     return location?.state?.title || `Connect • ${ownerName}`;
@@ -523,6 +542,11 @@ export default function ContactPage() {
         <div style={styles.topBar}>
           <div style={styles.topLeft}>
             <div style={styles.pillTitle}>{headerTitle}</div>
+            {!hasProfileKey ? (
+              <div style={{ marginTop: 6, color: '#fca5a5', fontWeight: 800, fontSize: 12 }}>
+                Missing profileKey — open as <span style={{ opacity: 0.9 }}>/world/:profileKey/contact</span>
+              </div>
+            ) : null}
           </div>
 
           <div style={styles.topActions}>
@@ -542,7 +566,7 @@ export default function ContactPage() {
               </Bubble>
             ))}
 
-            {step === 2 && !address && (
+            {hasProfileKey && step === 2 && !address && (
               <Bubble role="ai">
                 <div style={{ color: '#fff' }}>Add an address? (optional)</div>
                 <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -554,7 +578,7 @@ export default function ContactPage() {
               </Bubble>
             )}
 
-            {step === 3 && !note && (
+            {hasProfileKey && step === 3 && !note && (
               <Bubble role="ai">
                 <div style={{ color: '#fff' }}>Add a note? (optional)</div>
                 <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -566,7 +590,7 @@ export default function ContactPage() {
               </Bubble>
             )}
 
-            {step === 4 && !selfieObjUrl && (
+            {hasProfileKey && step === 4 && !selfieObjUrl && (
               <Bubble role="ai">
                 <div style={{ color: '#fff' }}>{`Do you want to add a selfie so ${ownerName} recognizes you? (optional)`}</div>
                 <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -579,7 +603,7 @@ export default function ContactPage() {
               </Bubble>
             )}
 
-            {step >= 5 && (
+            {hasProfileKey && step >= 5 && (
               <div style={styles.confirmWrap}>
                 <div style={styles.confirmCard}>
                   <div style={styles.confirmHead}>
@@ -644,7 +668,6 @@ export default function ContactPage() {
                     </div>
                   </div>
 
-                  {/* identity toggle */}
                   <div
                     style={styles.meToggle}
                     onClick={() => setSetAsMe((v) => !v)}
@@ -722,7 +745,6 @@ export default function ContactPage() {
             </div>
           )}
 
-          {/* hidden file inputs: camera + upload */}
           <input
             ref={fileCameraRef}
             type="file"
@@ -770,191 +792,49 @@ const styles = {
       'radial-gradient(circle at 20% 10%, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 45%, rgba(0,0,0,0.70) 78%), linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.88))',
   },
 
-  shell: {
-    position: 'relative',
-    zIndex: 2,
-    maxWidth: 980,
-    margin: '0 auto',
-    padding: '18px 18px 28px',
-  },
+  shell: { position: 'relative', zIndex: 2, maxWidth: 980, margin: '0 auto', padding: '18px 18px 28px' },
 
-  topBar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: 12,
-    alignItems: 'center',
-    marginTop: 6,
-    marginBottom: 12,
-  },
+  topBar: { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginTop: 6, marginBottom: 12 },
   topLeft: { display: 'flex', flexDirection: 'column', gap: 6 },
-  pillTitle: {
-    fontWeight: 900,
-    letterSpacing: 1.2,
-    fontSize: 16,
-    textTransform: 'uppercase',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-
+  pillTitle: { fontWeight: 900, letterSpacing: 1.2, fontSize: 16, textTransform: 'uppercase', display: 'inline-flex', alignItems: 'center', gap: 10 },
   topActions: { display: 'flex', gap: 10, alignItems: 'center' },
 
-  card: {
-    position: 'relative',
-    borderRadius: 24,
-    overflow: 'hidden',
-    border: '1px solid rgba(255,255,255,0.16)',
-    background: 'rgba(255,255,255,0.06)',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.45)',
-  },
-  cardOverlay: {
-    position: 'absolute',
-    inset: 0,
-    pointerEvents: 'none',
-    background: 'linear-gradient(180deg, rgba(255,255,255,0.11), rgba(255,255,255,0.03))',
-  },
+  card: { position: 'relative', borderRadius: 24, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.06)', boxShadow: '0 20px 60px rgba(0,0,0,0.45)' },
+  cardOverlay: { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(255,255,255,0.11), rgba(255,255,255,0.03))' },
 
-  chat: {
-    position: 'relative',
-    maxHeight: '72vh',
-    overflowY: 'auto',
-    padding: 18,
-  },
+  chat: { position: 'relative', maxHeight: '72vh', overflowY: 'auto', padding: 18 },
 
-  composerWrap: {
-    borderTop: '1px solid rgba(255,255,255,0.10)',
-    padding: 14,
-    background: 'rgba(0,0,0,0.20)',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-  },
-  composer: {
-    display: 'flex',
-    gap: 10,
-    alignItems: 'center',
-    borderRadius: 999,
-    padding: '10px 12px',
-    border: '1px solid rgba(255,255,255,0.14)',
-    background: 'rgba(255,255,255,0.08)',
-  },
+  composerWrap: { borderTop: '1px solid rgba(255,255,255,0.10)', padding: 14, background: 'rgba(0,0,0,0.20)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' },
+  composer: { display: 'flex', gap: 10, alignItems: 'center', borderRadius: 999, padding: '10px 12px', border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.08)' },
   composerIcon: { width: 32, textAlign: 'center', fontSize: 16 },
-  input: {
-    flex: 1,
-    background: 'transparent',
-    border: 'none',
-    outline: 'none',
-    color: '#fff',
-    padding: '8px 6px',
-    fontSize: 14,
-  },
-  composerHint: {
-    marginTop: 8,
-    fontSize: 12,
-    color: '#94a3b8',
-  },
-  errorInline: {
-    marginTop: 10,
-    fontSize: 12,
-    color: '#fca5a5',
-  },
+  input: { flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#fff', padding: '8px 6px', fontSize: 14 },
+  composerHint: { marginTop: 8, fontSize: 12, color: '#94a3b8' },
+  errorInline: { marginTop: 10, fontSize: 12, color: '#fca5a5' },
 
   confirmWrap: { marginTop: 4, paddingBottom: 10 },
-  confirmCard: {
-    borderRadius: 20,
-    border: '1px solid rgba(255,255,255,0.14)',
-    background: 'rgba(0,0,0,0.24)',
-    padding: 14,
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-  },
+  confirmCard: { borderRadius: 20, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(0,0,0,0.24)', padding: 14, backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' },
   confirmHead: { marginBottom: 10 },
   confirmTitle: { fontSize: 16, fontWeight: 900, letterSpacing: 0.6 },
   confirmHint: { marginTop: 4, fontSize: 12, color: '#cfd3dc' },
 
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gap: 12,
-    marginTop: 10,
-  },
-  block: {
-    borderRadius: 16,
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(255,255,255,0.06)',
-    padding: 12,
-  },
-  blockLabel: {
-    color: '#cfd3dc',
-    fontSize: 11,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    fontWeight: 900,
-  },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 10 },
+  block: { borderRadius: 16, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', padding: 12 },
+  blockLabel: { color: '#cfd3dc', fontSize: 11, letterSpacing: 0.8, textTransform: 'uppercase', fontWeight: 900 },
   blockValue: { marginTop: 6, fontWeight: 800 },
   blockActions: { marginTop: 10, display: 'flex', gap: 10 },
 
-  selfieRow: {
-    display: 'flex',
-    gap: 12,
-    alignItems: 'center',
-    borderRadius: 16,
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(255,255,255,0.06)',
-    padding: 10,
-  },
-  selfieImg: {
-    width: 74,
-    height: 74,
-    borderRadius: 16,
-    objectFit: 'cover',
-    border: '1px solid rgba(255,255,255,0.14)',
-  },
+  selfieRow: { display: 'flex', gap: 12, alignItems: 'center', borderRadius: 16, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', padding: 10 },
+  selfieImg: { width: 74, height: 74, borderRadius: 16, objectFit: 'cover', border: '1px solid rgba(255,255,255,0.14)' },
 
-  meToggle: {
-    marginTop: 12,
-    display: 'flex',
-    gap: 12,
-    alignItems: 'flex-start',
-    padding: 12,
-    borderRadius: 18,
-    border: '1px solid rgba(255,255,255,0.14)',
-    background: 'rgba(0,0,0,0.22)',
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
-  checkbox: {
-    width: 28,
-    height: 28,
-    borderRadius: 10,
-    display: 'grid',
-    placeItems: 'center',
-    background: 'rgba(255,255,255,0.08)',
-    border: '1px solid rgba(255,255,255,0.14)',
-    fontWeight: 900,
-  },
+  meToggle: { marginTop: 12, display: 'flex', gap: 12, alignItems: 'flex-start', padding: 12, borderRadius: 18, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(0,0,0,0.22)', cursor: 'pointer', userSelect: 'none' },
+  checkbox: { width: 28, height: 28, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', fontWeight: 900 },
   meTitle: { fontWeight: 900 },
   meSub: { marginTop: 4, color: '#cfd3dc', fontSize: 12, lineHeight: '16px' },
 
-  confirmActions: {
-    marginTop: 12,
-    display: 'flex',
-    gap: 10,
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-  },
-  errorNote: {
-    marginTop: 12,
-    padding: 10,
-    borderRadius: 14,
-    border: '1px solid rgba(239,68,68,0.25)',
-    background: 'rgba(239,68,68,0.10)',
-    color: '#fecaca',
-    fontSize: 12,
-    fontWeight: 800,
-  },
+  confirmActions: { marginTop: 12, display: 'flex', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' },
+  errorNote: { marginTop: 12, padding: 10, borderRadius: 14, border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.10)', color: '#fecaca', fontSize: 12, fontWeight: 800 },
 };
 
-// responsive tweak (inline because we’re doing “no CSS file” drop-in)
 const styleEl = document?.getElementById?.('contactpage-responsive-style');
 if (!styleEl && typeof document !== 'undefined') {
   const s = document.createElement('style');
