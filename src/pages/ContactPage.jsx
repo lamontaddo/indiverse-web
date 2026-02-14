@@ -674,11 +674,7 @@ export default function ContactPage() {
                     role="button"
                     tabIndex={0}
                   >
-                    <div style={styles.checkbox}>{setAsMe ? '☑' : '☐'}</div>
-                    <div style={{ flex: 1 }}>
-                      <div style={styles.meTitle}>This is me (enable Direct Line on this device)</div>
-                      <div style={styles.meSub}>Leave OFF if you’re only adding someone to the phone book.</div>
-                    </div>
+                   
                   </div>
 
                   <div style={styles.confirmActions}>
