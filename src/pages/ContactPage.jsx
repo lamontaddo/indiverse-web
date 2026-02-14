@@ -668,12 +668,7 @@ export default function ContactPage() {
                     </div>
                   </div>
 
-                  <div
-                    style={styles.meToggle}
-                    onClick={() => setSetAsMe((v) => !v)}
-                    role="button"
-                    tabIndex={0}
-                  >
+               
                    
                   </div>
 
