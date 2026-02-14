@@ -219,7 +219,6 @@ export default function ContactPage() {
   const [selfieFile, setSelfieFile] = useState(null);
 
   // device identity toggle
-  const [setAsMe, setSetAsMe] = useState(() => (location?.state?.mode === 'connect' ? true : false));
 
   // 0=name, 1=phone, 2=address(opt), 3=note(opt), 4=selfie(opt), 5=confirm
   const [step, setStep] = useState(0);
@@ -246,7 +245,7 @@ export default function ContactPage() {
     const m = [
       { role: 'ai', text: `Hey — I’m ${ownerName}’s assistant.` },
       { role: 'ai', text: `Let’s add a new contact to ${ownerName}’s phone book.` },
-      { role: 'ai', text: `Add anyone you want, or connect yourself so ${ownerName} recognizes you.` },
+      { role: 'ai', text: `Add anyone you want — this saves directly to ${ownerName}’s contact list.` },
     ];
 
     if (!hasProfileKey) {
@@ -472,19 +471,13 @@ export default function ContactPage() {
 
       const contactDoc = json?.contact || null;
       const createdId = contactDoc?._id || contactDoc?.id || null;
-      const createdPhone = contactDoc?.phone || phone;
 
       if (!createdId) throw new Error('Contact created but missing contact._id in response.');
 
-      if (setAsMe) {
-        try {
-          localStorage.setItem(`chatContactId:${activeProfileKey}`, String(createdId));
-          localStorage.setItem(`chatPhone:${activeProfileKey}`, String(createdPhone));
-        } catch {}
-      }
+   
 
       setErrorNote('');
-      alert(setAsMe ? 'Saved + connected. You can open Direct Line now.' : `Saved to ${ownerName}’s contact list.`);
+      alert(`Saved to ${ownerName}’s contact list.`);
 
       navigate(`/world/${encodeURIComponent(activeProfileKey)}`, {
         state: { profileKey: activeProfileKey, bgUrl },
@@ -501,7 +494,7 @@ export default function ContactPage() {
     address,
     note,
     activeProfileKey,
-    setAsMe,
+    
     ownerName,
     navigate,
     bgUrl,
@@ -668,9 +661,7 @@ export default function ContactPage() {
                     </div>
                   </div>
 
-               
-                   
-                  </div>
+                  
 
                   <div style={styles.confirmActions}>
                     <Chip
