@@ -1,8 +1,9 @@
-// src/pages/OwnerContactsPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + FIXED API BASE + SELFIE AVATAR
+// src/pages/OwnerContactsPage.jsx ✅ FULL DROP-IN (Web) — HARDENED + FIXED API BASE + SELFIE AVATAR + DELETE CONTACT
 // Route: /world/:profileKey/owner/contacts
 //
 // Uses:
-//  - GET /api/owner/contacts
+//  - GET    /api/owner/contacts
+//  - DELETE /api/owner/contacts/:id   ✅ NEW
 //
 // Hardened:
 // ✅ NO 'lamont' fallback
@@ -13,6 +14,7 @@
 // ✅ Search + expand/collapse + refresh
 // ✅ tel:/sms: actions
 // ✅ Selfie avatar + cache-bust + visible onError diagnostics
+// ✅ Delete with confirm + optimistic UI + rollback on failure + "Deleting…" lock
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -50,11 +52,7 @@ function ownerTokenKey(profileKey) {
 function getOwnerToken(profileKey) {
   try {
     const pk = normalizePk(profileKey);
-    return (
-      localStorage.getItem(ownerTokenKey(pk)) ||
-      localStorage.getItem("ownerToken") ||
-      ""
-    );
+    return localStorage.getItem(ownerTokenKey(pk)) || localStorage.getItem("ownerToken") || "";
   } catch {
     return "";
   }
@@ -92,9 +90,7 @@ async function ownerFetchRawWeb(path, { profileKey, method = "GET", body } = {})
       ...headers,
     },
     credentials: "include",
-    ...(body !== undefined
-      ? { body: typeof body === "string" ? body : JSON.stringify(body) }
-      : {}),
+    ...(body !== undefined ? { body: typeof body === "string" ? body : JSON.stringify(body) } : {}),
   });
 
   return res;
@@ -163,6 +159,9 @@ export default function OwnerContactsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+
+  // ✅ delete lock
+  const [deletingId, setDeletingId] = useState(null);
 
   const inFlightRef = useRef(false);
 
@@ -275,11 +274,7 @@ export default function OwnerContactsPage() {
           throw new Error(`${msg} (status ${res.status}) @ ${apiUrl("/api/owner/contacts")}`);
         }
 
-        const arr = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.contacts)
-          ? data.contacts
-          : [];
+        const arr = Array.isArray(data) ? data : Array.isArray(data?.contacts) ? data.contacts : [];
 
         setContacts(arr);
 
@@ -312,7 +307,9 @@ export default function OwnerContactsPage() {
   const visibleContacts = useMemo(() => {
     let list = contacts;
 
-    const q = String(search || "").trim().toLowerCase();
+    const q = String(search || "")
+      .trim()
+      .toLowerCase();
     if (q) {
       list = list.filter((c) => {
         const name = `${c.firstName || ""} ${c.lastName || ""}`.toLowerCase();
@@ -346,6 +343,65 @@ export default function OwnerContactsPage() {
     });
   };
 
+  // ✅ DELETE contact: confirm + optimistic remove + rollback on failure
+  const deleteContact = useCallback(
+    async (contact) => {
+      if (!profileKey) return;
+
+      const id = contact?._id || contact?.id || null;
+      if (!id) {
+        setError("Cannot delete: contact is missing _id.");
+        return;
+      }
+
+      const name = `${contact?.firstName || ""} ${contact?.lastName || ""}`.trim() || "this contact";
+      const phone = String(contact?.phone || "").trim();
+
+      const ok = window.confirm(`Delete ${name}${phone ? ` (${phone})` : ""}? This cannot be undone.`);
+      if (!ok) return;
+
+      // optimistic remove (id-based, safest)
+      const prev = contacts;
+      setDeletingId(String(id));
+      setContacts((list) => list.filter((x) => String(x?._id || x?.id || "") !== String(id)));
+
+      // collapse if currently expanded
+      setExpandedId((prevExpanded) => (String(prevExpanded) === String(id) ? null : prevExpanded));
+
+      try {
+        setError(null);
+
+        const res = await ownerFetchRawWeb(`/api/owner/contacts/${encodeURIComponent(String(id))}`, {
+          profileKey,
+          method: "DELETE",
+        });
+
+        const data = await readJsonSafe(res);
+
+        if (res.status === 401 || res.status === 403) {
+          setError("Session expired. Please log in again.");
+          goOwnerLogin(profileKey);
+          return;
+        }
+
+        if (!res.ok || data?.ok === false) {
+          const msg = data?.error || data?.message || "Failed to delete contact.";
+          throw new Error(`${msg} (status ${res.status})`);
+        }
+
+        // refresh cache seed for remaining avatars
+        setCacheSeed(Date.now());
+      } catch (err) {
+        // rollback
+        setContacts(prev);
+        setError(err?.message || "Failed to delete contact.");
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [profileKey, contacts, goOwnerLogin]
+  );
+
   return (
     <div style={styles.page(accent)}>
       <style>{css(accent)}</style>
@@ -372,7 +428,7 @@ export default function OwnerContactsPage() {
         <button
           style={{ ...styles.ghostBtn, opacity: refreshing ? 0.7 : 1 }}
           onClick={() => fetchContacts({ isRefresh: true })}
-          disabled={!canUseApi || refreshing}
+          disabled={!canUseApi || refreshing || !!deletingId}
           title="Refresh"
         >
           ⟳
@@ -399,7 +455,7 @@ export default function OwnerContactsPage() {
       {error ? (
         <div style={styles.errorBanner}>
           <div style={styles.errorText}>{error}</div>
-          <button style={styles.retryBtn} onClick={() => fetchContacts({ isRefresh: true })}>
+          <button style={styles.retryBtn} onClick={() => fetchContacts({ isRefresh: true })} disabled={!!deletingId}>
             Retry
           </button>
         </div>
@@ -414,21 +470,20 @@ export default function OwnerContactsPage() {
       ) : visibleContacts.length === 0 ? (
         <div style={styles.center}>
           <div style={styles.emptyTitle}>No contacts yet</div>
-          <div style={styles.muted}>
-            Once people fill out your contact form, they’ll appear here.
-          </div>
+          <div style={styles.muted}>Once people fill out your contact form, they’ll appear here.</div>
         </div>
       ) : (
         <div style={styles.list}>
           {visibleContacts.map((c, idx) => {
             const key = getContactKey(c, idx);
+            const id = String(c?._id || c?.id || key);
             const isExpanded = expandedId === key;
+            const isDeleting = deletingId === String(c?._id || c?.id || "");
 
             const initials = getInitials(c.firstName, c.lastName);
             const displayName = `${c.firstName || ""} ${c.lastName || ""}`.trim() || "(No name)";
             const phone = String(c.phone || "").trim();
-            const previewNote =
-              c.note && c.note.length > 40 ? c.note.slice(0, 40) + "…" : c.note || "";
+            const previewNote = c.note && c.note.length > 40 ? c.note.slice(0, 40) + "…" : c.note || "";
 
             const rawSelfieUrl = String(c.selfieUrl || "").trim();
             const hasSelfie = /^https?:\/\//i.test(rawSelfieUrl);
@@ -437,7 +492,7 @@ export default function OwnerContactsPage() {
             const errMsg = imgErr?.[key] || "";
 
             return (
-              <div key={key} style={styles.card}>
+              <div key={id} style={styles.card}>
                 <div style={styles.cardTopRow}>
                   <div style={styles.avatarSquare}>
                     {hasSelfie ? (
@@ -450,8 +505,7 @@ export default function OwnerContactsPage() {
                         onError={() => {
                           setImgErr((prev) => ({
                             ...prev,
-                            [key]:
-                              "Image failed to load (likely S3 GetObject blocked for contacts/selfies).",
+                            [key]: "Image failed to load (likely S3 GetObject blocked for contacts/selfies).",
                           }));
                         }}
                         onLoad={() => {
@@ -484,15 +538,14 @@ export default function OwnerContactsPage() {
                       </div>
                     ) : null}
 
-                    {hasSelfie ? (
-                      <div style={styles.hasSelfieTag}>selfieUrl ✓</div>
-                    ) : null}
+                    {hasSelfie ? <div style={styles.hasSelfieTag}>selfieUrl ✓</div> : null}
                   </div>
 
                   <button
-                    style={styles.expandBtn}
-                    onClick={() => toggleExpand(c, idx)}
+                    style={{ ...styles.expandBtn, opacity: isDeleting ? 0.55 : 1, cursor: isDeleting ? "not-allowed" : "pointer" }}
+                    onClick={isDeleting ? undefined : () => toggleExpand(c, idx)}
                     title={isExpanded ? "Collapse" : "Expand"}
+                    disabled={isDeleting}
                   >
                     {isExpanded ? "▴" : "▾"}
                   </button>
@@ -504,26 +557,39 @@ export default function OwnerContactsPage() {
 
                     <div style={styles.actionsRow}>
                       {phone ? (
-                        <button style={styles.actionBtn} onClick={() => openCall(phone)}>
+                        <button style={styles.actionBtn} onClick={() => openCall(phone)} disabled={isDeleting}>
                           📞 Call
                         </button>
                       ) : null}
 
                       {phone ? (
-                        <button style={styles.actionBtn} onClick={() => openSms(phone)}>
+                        <button style={styles.actionBtn} onClick={() => openSms(phone)} disabled={isDeleting}>
                           💬 Text
                         </button>
                       ) : null}
 
-                      <button style={styles.actionBtn} onClick={() => goOwnerMessages(c)}>
+                      <button style={styles.actionBtn} onClick={() => goOwnerMessages(c)} disabled={isDeleting}>
                         🧠 Chat
                       </button>
 
                       {isLikelyAppleDevice() && phone ? (
-                        <button style={styles.actionBtn} onClick={() => openFaceTime(phone)}>
+                        <button style={styles.actionBtn} onClick={() => openFaceTime(phone)} disabled={isDeleting}>
                           🎥 FaceTime
                         </button>
                       ) : null}
+
+                      <button
+                        style={{
+                          ...styles.deleteBtn,
+                          opacity: isDeleting ? 0.7 : 1,
+                          cursor: isDeleting ? "not-allowed" : "pointer",
+                        }}
+                        onClick={isDeleting ? undefined : () => deleteContact(c)}
+                        disabled={isDeleting}
+                        title="Delete contact"
+                      >
+                        {isDeleting ? "Deleting…" : "🗑 Delete"}
+                      </button>
                     </div>
 
                     {c.address ? (
@@ -553,14 +619,13 @@ export default function OwnerContactsPage() {
                             style={styles.linkBtn}
                             onClick={() => setCacheSeed(Date.now())}
                             title="Force refresh image"
+                            disabled={isDeleting}
                           >
                             Refresh image
                           </button>
                         </div>
 
-                        {errMsg ? (
-                          <div style={styles.imgErrorText}>{errMsg}</div>
-                        ) : null}
+                        {errMsg ? <div style={styles.imgErrorText}>{errMsg}</div> : null}
 
                         <img
                           src={selfieSrc}
@@ -761,6 +826,16 @@ const styles = {
     border: "1px solid rgba(148,163,184,0.65)",
     background: "rgba(15,23,42,0.85)",
     color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+
+  deleteBtn: {
+    borderRadius: 999,
+    padding: "8px 12px",
+    border: "1px solid rgba(239,68,68,0.55)",
+    background: "rgba(239,68,68,0.14)",
+    color: "#fecaca",
     fontWeight: 900,
     cursor: "pointer",
   },
