@@ -241,11 +241,23 @@ export default function OwnerChatPage() {
 
   const headerSubtitle = useMemo(() => {
     const bits = [];
-    if (!isAuthThread && contact?.phone) bits.push(String(contact.phone));
-    if (isAuthThread && userId) bits.push(`userId ${String(userId).slice(0, 12)}…`);
-    if (profileKey) bits.push(profileKey);
+  
+    // contact thread → show phone
+    if (!isAuthThread && contact?.phone) {
+      bits.push(String(contact.phone));
+    }
+  
+    // auth thread → show email instead (if available)
+    if (isAuthThread && threadUser?.email) {
+      bits.push(String(threadUser.email));
+    }
+  
+    // show profileKey only if you still want it
+    // if (profileKey) bits.push(profileKey);
+  
     return bits.join(" • ");
-  }, [isAuthThread, contact?.phone, userId, profileKey]);
+  }, [isAuthThread, contact?.phone, threadUser?.email]);
+  
 
   const goOwnerLogin = useCallback(() => {
     if (!profileKey) return navigate("/", { replace: true });
