@@ -1,4 +1,4 @@
-// src/pages/ProductDetailsPage.jsx ✅ FULL DROP-IN (Web, more web-friendly)
+// src/pages/ProductDetailsPage.jsx ✅ FULL DROP-IN (Web, more web-friendly + CLICK-TO-ZOOM)
 // Route: /world/:profileKey/products/:productId
 //
 // ✅ Web layout: 2-col (gallery + details) on desktop, stacked on mobile
@@ -10,6 +10,10 @@
 //    - falls back to GET /api/products and find
 // ✅ Add to cart + Buy now (go to cart mode=products)
 // ✅ Chips + qty + subtotal
+// ✅ NEW: Click image to open full-screen zoom (lightbox)
+//    - ESC to close
+//    - click outside to close
+//    - locks background scroll while open
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -39,7 +43,12 @@ function uniq(arr) {
 }
 
 function samePick(a, b) {
-  return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+  return String(a || "")
+    .trim()
+    .toLowerCase() ===
+    String(b || "")
+      .trim()
+      .toLowerCase();
 }
 
 function getId(p) {
@@ -66,6 +75,29 @@ export default function ProductDetailsPage() {
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
 
+  // ✅ Zoom modal state
+  const [isZoomOpen, setIsZoomOpen] = useState(false);
+  const openZoom = () => setIsZoomOpen(true);
+  const closeZoom = () => setIsZoomOpen(false);
+
+  // ESC to close + lock body scroll while open
+  useEffect(() => {
+    if (!isZoomOpen) return;
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") closeZoom();
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isZoomOpen]);
+
   // Load product if not passed via state (direct link support)
   useEffect(() => {
     let mounted = true;
@@ -83,14 +115,10 @@ export default function ProductDetailsPage() {
 
       // 1) Try /api/products/:id
       try {
-        const res = await profileFetchRaw(
-          profileKey,
-          `/api/products/${encodeURIComponent(productId)}`,
-          {
-            method: "GET",
-            headers: { Accept: "application/json" },
-          }
-        );
+        const res = await profileFetchRaw(profileKey, `/api/products/${encodeURIComponent(productId)}`, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+        });
 
         if (res.ok) {
           const data = await res.json();
@@ -143,6 +171,7 @@ export default function ProductDetailsPage() {
     setQuantity(1);
     setSelectedSize(sizes.length === 1 ? sizes[0] : "");
     setSelectedColor(colors.length === 1 ? colors[0] : "");
+    setIsZoomOpen(false); // close zoom if navigating to another product
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product?._id, product?.id]);
 
@@ -264,15 +293,25 @@ export default function ProductDetailsPage() {
               <div className="pd-left" style={styles.leftCol}>
                 <div className="pd-gallery" style={styles.galleryCard}>
                   <div style={styles.sheen} />
+
                   {product?.imageUrl ? (
-                    <img
-                      src={product.imageUrl}
-                      alt={product?.name || "Product"}
-                      style={styles.galleryImg}
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
+                    <button
+                      type="button"
+                      onClick={openZoom}
+                      style={styles.zoomBtn}
+                      aria-label="Open image"
+                      title="Click to enlarge"
+                    >
+                      <img
+                        src={product.imageUrl}
+                        alt={product?.name || "Product"}
+                        style={styles.galleryImg}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                      <div style={styles.zoomHint}>Click to zoom</div>
+                    </button>
                   ) : (
                     <div style={styles.galleryPlaceholder}>
                       <div style={{ fontSize: 24 }}>🧊</div>
@@ -282,9 +321,7 @@ export default function ProductDetailsPage() {
 
                   <div style={styles.galleryOverlayTop}>
                     <div style={styles.pill}>PRODUCT</div>
-                    {product?.inStock === false ? (
-                      <div style={{ ...styles.pill, ...styles.pillDanger }}>OUT</div>
-                    ) : null}
+                    {product?.inStock === false ? <div style={{ ...styles.pill, ...styles.pillDanger }}>OUT</div> : null}
                   </div>
                 </div>
 
@@ -310,9 +347,7 @@ export default function ProductDetailsPage() {
                       {product?.category ? (
                         <div style={styles.meta}>{String(product.category).toUpperCase()}</div>
                       ) : null}
-                      {product?.description ? (
-                        <div style={styles.desc}>{product.description}</div>
-                      ) : null}
+                      {product?.description ? <div style={styles.desc}>{product.description}</div> : null}
                     </div>
 
                     <div style={styles.priceBox}>
@@ -334,9 +369,7 @@ export default function ProductDetailsPage() {
                               onClick={() => setSelectedSize(s)}
                               style={{ ...styles.chip, ...(active ? styles.chipActive : null) }}
                             >
-                              <span style={{ ...styles.chipText, ...(active ? styles.chipTextActive : null) }}>
-                                {s}
-                              </span>
+                              <span style={{ ...styles.chipText, ...(active ? styles.chipTextActive : null) }}>{s}</span>
                             </button>
                           );
                         })}
@@ -357,9 +390,7 @@ export default function ProductDetailsPage() {
                               onClick={() => setSelectedColor(c)}
                               style={{ ...styles.chip, ...(active ? styles.chipActive : null) }}
                             >
-                              <span style={{ ...styles.chipText, ...(active ? styles.chipTextActive : null) }}>
-                                {c}
-                              </span>
+                              <span style={{ ...styles.chipText, ...(active ? styles.chipTextActive : null) }}>{c}</span>
                             </button>
                           );
                         })}
@@ -427,6 +458,32 @@ export default function ProductDetailsPage() {
 
         <div style={{ height: 28 }} />
       </div>
+
+      {/* ✅ Zoom modal */}
+      {isZoomOpen && product?.imageUrl ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Product image"
+          style={styles.zoomOverlay}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeZoom();
+          }}
+        >
+          <div style={styles.zoomTopBar}>
+            <div style={styles.zoomTitle}>{product?.name || "Product"}</div>
+            <button type="button" onClick={closeZoom} style={styles.zoomClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
+
+          <img src={product.imageUrl} alt={product?.name || "Product"} style={styles.zoomImg} />
+
+          <div style={styles.zoomFooter}>
+            <span style={styles.zoomTip}>ESC to close • Click outside to close</span>
+          </div>
+        </div>
+      ) : null}
 
       <style>{css}</style>
     </div>
@@ -505,8 +562,20 @@ const styles = {
     backdropFilter: "blur(14px)",
     boxShadow: "0 18px 50px rgba(0,0,0,0.55)",
   },
-  galleryImg: { width: "100%", height: 520, objectFit: "cover", objectPosition: "center", display: "block" },
-  galleryPlaceholder: { height: 520, display: "grid", placeItems: "center", gap: 8, background: "rgba(15,23,42,0.9)" },
+  galleryImg: {
+    width: "100%",
+    height: 520,
+    objectFit: "cover",
+    objectPosition: "center",
+    display: "block",
+  },
+  galleryPlaceholder: {
+    height: 520,
+    display: "grid",
+    placeItems: "center",
+    gap: 8,
+    background: "rgba(15,23,42,0.9)",
+  },
   galleryPlaceholderText: { color: "#cfd3dc", fontSize: 12 },
 
   galleryOverlayTop: {
@@ -538,7 +607,13 @@ const styles = {
     pointerEvents: "none",
   },
 
-  topRow: { position: "relative", display: "flex", gap: 14, alignItems: "flex-start", justifyContent: "space-between" },
+  topRow: {
+    position: "relative",
+    display: "flex",
+    gap: 14,
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+  },
   name: { fontSize: 20, fontWeight: 900 },
   meta: { marginTop: 6, fontSize: 11, color: "#e5e7eb", letterSpacing: 1, opacity: 0.9 },
   desc: { marginTop: 10, color: "#cbd5f5", fontSize: 13, lineHeight: "18px" },
@@ -644,7 +719,13 @@ const styles = {
   link: { color: "rgba(0,255,255,0.85)", textDecoration: "none", fontSize: 12 },
 
   center: { minHeight: 260, display: "grid", placeItems: "center", gap: 10, padding: 24, textAlign: "center" },
-  spinner: { width: 18, height: 18, borderRadius: 999, border: "2px solid rgba(255,255,255,0.18)", borderTopColor: "#fff" },
+  spinner: {
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    border: "2px solid rgba(255,255,255,0.18)",
+    borderTopColor: "#fff",
+  },
   muted: { color: "#cfd3dc", fontSize: 13 },
   error: { color: "#fca5a5", fontSize: 13 },
 
@@ -658,6 +739,93 @@ const styles = {
     letterSpacing: 0.9,
   },
   pillDanger: { background: "rgba(185,28,28,0.55)", border: "1px solid rgba(255,255,255,0.20)" },
+
+  /* ✅ Zoom button wrapper */
+  zoomBtn: {
+    width: "100%",
+    border: 0,
+    padding: 0,
+    background: "transparent",
+    cursor: "zoom-in",
+    display: "block",
+    position: "relative",
+  },
+  zoomHint: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    padding: "8px 10px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(0,0,0,0.45)",
+    backdropFilter: "blur(10px)",
+    pointerEvents: "none",
+  },
+
+  /* ✅ Zoom modal */
+  zoomOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 9999,
+    background: "rgba(0,0,0,0.78)",
+    backdropFilter: "blur(10px)",
+    display: "grid",
+    gridTemplateRows: "auto 1fr auto",
+    alignItems: "center",
+    justifyItems: "center",
+    padding: 16,
+  },
+  zoomTopBar: {
+    width: "min(1100px, 100%)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "10px 6px",
+  },
+  zoomTitle: {
+    fontWeight: 900,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.9)",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  zoomClose: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,255,255,0.08)",
+    color: "#fff",
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+    fontSize: 16,
+    fontWeight: 900,
+  },
+  zoomImg: {
+    width: "min(1100px, 100%)",
+    height: "min(78vh, 820px)",
+    objectFit: "contain",
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.35)",
+    boxShadow: "0 30px 90px rgba(0,0,0,0.7)",
+  },
+  zoomFooter: {
+    width: "min(1100px, 100%)",
+    padding: "10px 6px 0",
+    display: "flex",
+    justifyContent: "center",
+  },
+  zoomTip: { fontSize: 11, color: "rgba(255,255,255,0.75)" },
 };
 
 const css = `
@@ -680,4 +848,8 @@ const css = `
 /* hover polish */
 button:focus { outline: none; }
 button:focus-visible { outline: 2px solid rgba(0,255,255,0.6); outline-offset: 2px; border-radius: 14px; }
+
+/* subtle zoom feel */
+.pd-gallery button:hover img { transform: scale(1.01); }
+.pd-gallery img { transition: transform 160ms ease; }
 `;
