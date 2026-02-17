@@ -98,7 +98,6 @@ function normalizeTracks(payload) {
             x?.imageUrl ||
             x?.image
         ),
-        // ✅ keep timestamps handy
         createdAt: x?.createdAt,
         updatedAt: x?.updatedAt,
       };
@@ -173,6 +172,7 @@ export default function PlaylistPage() {
       setLoadedFrom('');
       try {
         const ts = Date.now();
+
         // 1) primary
         let data = await apiJson(`/api/tracks/public?ts=${ts}`, { profileKey });
         let list = normalizeTracks(data);
@@ -233,7 +233,7 @@ export default function PlaylistPage() {
     } else if (sortMode === 'za') {
       sorted.sort((a, b) => String(b.title).localeCompare(String(a.title)));
     } else if (sortMode === 'oldest') {
-      // ✅ NEW: oldest first
+      // ✅ oldest first
       sorted.sort((a, b) => timeish(a.createdAt || a.updatedAt) - timeish(b.createdAt || b.updatedAt));
     } else {
       // recent (best effort)
@@ -267,6 +267,17 @@ export default function PlaylistPage() {
                 <span className="pl-dot">{ownerName}</span>
               </div>
               {errorNote ? <div className="pl-error">Note: {errorNote}</div> : null}
+              {lastUpdated ? (
+                <div className="pl-footnote">
+                  Updated: <code>{lastUpdated}</code>
+                  {loadedFrom ? (
+                    <>
+                      {' '}
+                      • source: <code>{loadedFrom}</code>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -318,7 +329,7 @@ export default function PlaylistPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="pl-center">
-            <div className="pl-muted">No tracks yet. Check back soon.</div>
+            <div className="pl-muted">{tracks.length ? 'No matches. Try another search.' : 'No tracks yet. Check back soon.'}</div>
           </div>
         ) : (
           <div className="pl-grid">
@@ -336,9 +347,7 @@ export default function PlaylistPage() {
 
                 <div className="pl-meta">
                   <div className="pl-title">{t.title || 'Untitled'}</div>
-                  <div className="pl-sub">
-                    {(t.artist || '—') + (t.album ? ` • ${t.album}` : '')}
-                  </div>
+                  <div className="pl-sub">{(t.artist || '—') + (t.album ? ` • ${t.album}` : '')}</div>
                   {t.tag ? <div className="pl-tag">{t.tag}</div> : null}
                 </div>
 
@@ -361,13 +370,7 @@ export default function PlaylistPage() {
         )}
       </div>
 
-      {/* styles unchanged */}
-      <style>{`/* keep your existing CSS exactly as-is */`}</style>
-    </div>
-  );
-}
-
-
+      {/* ✅ FULL STYLES INCLUDED */}
       <style>{`
         :root{
           --glass: rgba(255,255,255,0.06);
