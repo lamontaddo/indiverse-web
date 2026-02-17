@@ -1,14 +1,13 @@
 // src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + S3 selfie upload (camera OR device upload)
 // Route: /world/:profileKey/contact
 //
-// ✅ Visual: full-bleed world bg (passed via navigation state bgUrl), glass shell, chat bubbles
-// ✅ Steps: name -> phone -> address (skip) -> note (skip) -> selfie (skip) -> confirm/save
+// ✅ FIX: Address + Note now support NEWLINES (Enter inserts newline) — no accidental submit
+// ✅ Name + Phone still submit on Enter
 // ✅ Uses backend:
 //    - POST /api/contacts/sign-selfie-upload  (presign)  -> returns { putUrl, fileUrl, requiredHeaders }
 //    - PUT  <putUrl>                         (upload to S3 using requiredHeaders EXACTLY)
 //    - POST /api/contacts                    (save contact with selfieUrl=https...)
 // ✅ Sends x-profile-key header (profileKey REQUIRED)
-// ✅ Optional "This is me" device binding for chat identity (localStorage keys)
 // ✅ Works with VITE_API_BASE_URL (recommended). If empty, it will call relative /api/*
 //
 // IMPORTANT:
@@ -123,7 +122,7 @@ function Bubble({ role, children }) {
           WebkitBackdropFilter: 'blur(14px)',
           boxShadow: '0 12px 30px rgba(0,0,0,0.35)',
           lineHeight: '20px',
-          whiteSpace: 'pre-wrap',
+          whiteSpace: 'pre-wrap', // ✅ preserves newlines in bubbles
         }}
       >
         {children}
@@ -217,8 +216,6 @@ export default function ContactPage() {
   const [selfieObjUrl, setSelfieObjUrl] = useState('');
   const [selfieFileName, setSelfieFileName] = useState('');
   const [selfieFile, setSelfieFile] = useState(null);
-
-  // device identity toggle
 
   // 0=name, 1=phone, 2=address(opt), 3=note(opt), 4=selfie(opt), 5=confirm
   const [step, setStep] = useState(0);
@@ -423,7 +420,6 @@ export default function ContactPage() {
     if (!putUrl || !fileUrl) throw new Error('Sign upload missing putUrl/fileUrl');
 
     // IMPORTANT: send exactly what server says must be signed.
-    // If requiredHeaders includes Content-Type, it MUST match.
     const putRes = await fetch(putUrl, {
       method: 'PUT',
       headers: { ...requiredHeaders },
@@ -474,8 +470,6 @@ export default function ContactPage() {
 
       if (!createdId) throw new Error('Contact created but missing contact._id in response.');
 
-   
-
       setErrorNote('');
       alert(`Saved to ${ownerName}’s contact list.`);
 
@@ -487,21 +481,9 @@ export default function ContactPage() {
     } finally {
       setSaving(false);
     }
-  }, [
-    first,
-    last,
-    phone,
-    address,
-    note,
-    activeProfileKey,
-    
-    ownerName,
-    navigate,
-    bgUrl,
-    uploadSelfieIfNeeded,
-    hasProfileKey,
-  ]);
+  }, [first, last, phone, address, note, activeProfileKey, ownerName, navigate, bgUrl, uploadSelfieIfNeeded, hasProfileKey]);
 
+  // ✅ FIX: step 2/3 uses textarea + allows Enter new line
   const composer = useMemo(() => {
     if (!hasProfileKey) return null;
 
@@ -513,12 +495,54 @@ export default function ContactPage() {
       hint: '',
       icon: '',
       type: 'text',
+      multiline: false,
+      rows: 1,
     };
 
-    if (step === 0) return { ...common, icon: '👤', placeholder: 'e.g., Jordan Smith', hint: 'First + last name', onSend: advanceName };
-    if (step === 1) return { ...common, icon: '📞', placeholder: 'Phone number', hint: '10+ digits', onSend: advancePhone, type: 'tel' };
-    if (step === 2) return { ...common, icon: '📍', placeholder: 'Address (optional)', hint: 'Press Enter to save, or Skip', onSend: advanceAddress };
-    if (step === 3) return { ...common, icon: '💬', placeholder: 'Tiny note (optional)', hint: 'Press Enter to save, or Skip', onSend: advanceNote };
+    if (step === 0)
+      return {
+        ...common,
+        icon: '👤',
+        placeholder: 'e.g., Jordan Smith',
+        hint: 'First + last name (Enter to send)',
+        onSend: advanceName,
+        type: 'text',
+        multiline: false,
+      };
+
+    if (step === 1)
+      return {
+        ...common,
+        icon: '📞',
+        placeholder: 'Phone number',
+        hint: '10+ digits (Enter to send)',
+        onSend: advancePhone,
+        type: 'tel',
+        multiline: false,
+      };
+
+    if (step === 2)
+      return {
+        ...common,
+        icon: '📍',
+        placeholder: 'Address (optional)',
+        hint: 'Enter = new line • use the button to save • or Skip',
+        onSend: advanceAddress,
+        multiline: true,
+        rows: 3,
+      };
+
+    if (step === 3)
+      return {
+        ...common,
+        icon: '💬',
+        placeholder: 'Tiny note (optional)',
+        hint: 'Enter = new line • use the button to save • or Skip',
+        onSend: advanceNote,
+        multiline: true,
+        rows: 3,
+      };
+
     return null;
   }, [hasProfileKey, step, input, advanceName, advancePhone, advanceAddress, advanceNote]);
 
@@ -623,7 +647,9 @@ export default function ContactPage() {
 
                     <div style={styles.block}>
                       <div style={styles.blockLabel}>Address</div>
-                      <div style={styles.blockValue}>{address || <span style={{ opacity: 0.75 }}>(none)</span>}</div>
+                      <div style={styles.blockValue}>
+                        {address ? <span style={{ whiteSpace: 'pre-wrap' }}>{address}</span> : <span style={{ opacity: 0.75 }}>(none)</span>}
+                      </div>
                       <div style={styles.blockActions}>
                         <Chip onClick={() => editStep(2)}>✎ Edit</Chip>
                       </div>
@@ -631,7 +657,9 @@ export default function ContactPage() {
 
                     <div style={styles.block}>
                       <div style={styles.blockLabel}>Note</div>
-                      <div style={styles.blockValue}>{note || <span style={{ opacity: 0.75 }}>(none)</span>}</div>
+                      <div style={styles.blockValue}>
+                        {note ? <span style={{ whiteSpace: 'pre-wrap' }}>{note}</span> : <span style={{ opacity: 0.75 }}>(none)</span>}
+                      </div>
                       <div style={styles.blockActions}>
                         <Chip onClick={() => editStep(3)}>✎ Edit</Chip>
                       </div>
@@ -646,9 +674,7 @@ export default function ContactPage() {
                           <img src={selfieObjUrl} alt="selfie" style={styles.selfieImg} />
                           <div>
                             <div style={{ fontWeight: 800 }}>{selfieFileName || 'selfie'}</div>
-                            <div style={{ opacity: 0.75, fontSize: 12 }}>
-                              This will be uploaded and saved to your account.
-                            </div>
+                            <div style={{ opacity: 0.75, fontSize: 12 }}>This will be uploaded and saved to your account.</div>
                           </div>
                         </div>
                       ) : (
@@ -660,8 +686,6 @@ export default function ContactPage() {
                       </div>
                     </div>
                   </div>
-
-                  
 
                   <div style={styles.confirmActions}>
                     <Chip
@@ -685,25 +709,38 @@ export default function ContactPage() {
             )}
           </div>
 
+          {/* ✅ FIX: show composer for steps 0..3 (NOT 4) and use textarea for address/note */}
           {composer && step < 4 && (
             <div style={styles.composerWrap}>
-              <div style={styles.composer}>
+              <div style={{ ...styles.composer, ...(composer.multiline ? styles.composerMultiline : null) }}>
                 <div style={styles.composerIcon}>{composer.icon}</div>
 
-                <input
-                  value={composer.value}
-                  onChange={composer.onChange}
-                  placeholder={composer.placeholder}
-                  type={composer.type}
-                  style={styles.input}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') composer.onSend?.();
-                  }}
-                  autoComplete="off"
-                />
+                {composer.multiline ? (
+                  <textarea
+                    value={composer.value}
+                    onChange={composer.onChange}
+                    placeholder={composer.placeholder}
+                    rows={composer.rows || 3}
+                    style={styles.textarea}
+                    // ✅ IMPORTANT: do NOT submit on Enter; Enter adds newline naturally
+                    autoComplete="off"
+                  />
+                ) : (
+                  <input
+                    value={composer.value}
+                    onChange={composer.onChange}
+                    placeholder={composer.placeholder}
+                    type={composer.type}
+                    style={styles.input}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') composer.onSend?.();
+                    }}
+                    autoComplete="off"
+                  />
+                )}
 
                 <Chip variant="primary" onClick={composer.onSend} disabled={saving}>
-                  Send
+                  {composer.multiline ? 'Save' : 'Send'}
                 </Chip>
               </div>
 
@@ -789,7 +826,26 @@ const styles = {
   composerWrap: { borderTop: '1px solid rgba(255,255,255,0.10)', padding: 14, background: 'rgba(0,0,0,0.20)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' },
   composer: { display: 'flex', gap: 10, alignItems: 'center', borderRadius: 999, padding: '10px 12px', border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.08)' },
   composerIcon: { width: 32, textAlign: 'center', fontSize: 16 },
+
+  // ✅ NEW: multiline composer container tweaks (less pill, align top)
+  composerMultiline: { borderRadius: 18, alignItems: 'flex-start', paddingTop: 12, paddingBottom: 12 },
+
   input: { flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#fff', padding: '8px 6px', fontSize: 14 },
+
+  // ✅ NEW: textarea styling
+  textarea: {
+    flex: 1,
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: '#fff',
+    padding: '8px 6px',
+    fontSize: 14,
+    resize: 'none',
+    minHeight: 78,
+    lineHeight: '20px',
+  },
+
   composerHint: { marginTop: 8, fontSize: 12, color: '#94a3b8' },
   errorInline: { marginTop: 10, fontSize: 12, color: '#fca5a5' },
 
@@ -807,11 +863,6 @@ const styles = {
 
   selfieRow: { display: 'flex', gap: 12, alignItems: 'center', borderRadius: 16, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', padding: 10 },
   selfieImg: { width: 74, height: 74, borderRadius: 16, objectFit: 'cover', border: '1px solid rgba(255,255,255,0.14)' },
-
-  meToggle: { marginTop: 12, display: 'flex', gap: 12, alignItems: 'flex-start', padding: 12, borderRadius: 18, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(0,0,0,0.22)', cursor: 'pointer', userSelect: 'none' },
-  checkbox: { width: 28, height: 28, borderRadius: 10, display: 'grid', placeItems: 'center', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', fontWeight: 900 },
-  meTitle: { fontWeight: 900 },
-  meSub: { marginTop: 4, color: '#cfd3dc', fontSize: 12, lineHeight: '16px' },
 
   confirmActions: { marginTop: 12, display: 'flex', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' },
   errorNote: { marginTop: 12, padding: 10, borderRadius: 14, border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.10)', color: '#fecaca', fontSize: 12, fontWeight: 800 },
