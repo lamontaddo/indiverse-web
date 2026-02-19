@@ -1,9 +1,10 @@
 // src/pages/PaidVideoPlayerPage.jsx ✅ FULL DROP-IN (Web / Vite)
 // Route: /world/:profileKey/paid-videos/:videoId
 //
-// ✅ FIX: comments show username
+// ✅ FIX: comments show username (REAL name, not always "User")
 // - Web sends x-username on GET engagement + POST comments (and like)
-// - UI displays username from API (with safe fallbacks)
+// - Display name derives from: buyerUsername -> buyerUser(first/last/name/username) -> JWT -> "User"
+// - IMPORTANT: old comments already stored as "User" will stay "User" unless you migrate them server-side.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -86,6 +87,7 @@ function moneyFromCents(cents, currency = "usd") {
 function isMongoObjectId(s) {
   return typeof s === "string" && /^[a-f0-9]{24}$/i.test(s.trim());
 }
+
 function decodeJwtPayload(jwtToken) {
   try {
     const t = String(jwtToken || "").trim();
@@ -102,6 +104,7 @@ function decodeJwtPayload(jwtToken) {
     return null;
   }
 }
+
 function decodeJwtUserId(jwtToken) {
   const p = decodeJwtPayload(jwtToken);
   if (!p) return null;
@@ -115,6 +118,8 @@ function decodeJwtUserId(jwtToken) {
   return null;
 }
 
+/* -------------------- display name helpers (FIX) -------------------- */
+
 function cleanDisplayName(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
@@ -124,15 +129,36 @@ function getLocalDisplayName() {
   return v || "";
 }
 
+function getBuyerUserFromStorage() {
+  try {
+    const raw = localStorage.getItem("buyerUser");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function deriveDisplayNameFromBuyerUser() {
+  const u = getBuyerUserFromStorage();
+  if (!u) return "";
+
+  const full = cleanDisplayName(`${u?.firstName || ""} ${u?.lastName || ""}`);
+  return (
+    full ||
+    cleanDisplayName(u?.displayName || u?.name || u?.username || u?.userName || "")
+  );
+}
+
 function deriveDisplayNameFromToken(token) {
   const p = decodeJwtPayload(token) || {};
-  const v = cleanDisplayName(p.username || p.userName || p.name || "");
+  const v = cleanDisplayName(p.username || p.userName || p.name || p.displayName || "");
   return v || "";
 }
 
 function getMyDisplayName(token) {
   return (
     getLocalDisplayName() ||
+    deriveDisplayNameFromBuyerUser() || // ✅ KEY FIX
     deriveDisplayNameFromToken(token) ||
     "User"
   );
@@ -241,11 +267,14 @@ export default function PaidVideoPlayerPage() {
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
 
-  const requireLoginToast = useCallback((msg = "Please sign in first.") => {
-    console.log("[AUTH] blocked action:", msg, { hasToken: !!token, buyerUserId });
-    setErr(msg);
-    setTimeout(() => setErr(null), 1400);
-  }, [token, buyerUserId]);
+  const requireLoginToast = useCallback(
+    (msg = "Please sign in first.") => {
+      console.log("[AUTH] blocked action:", msg, { hasToken: !!token, buyerUserId });
+      setErr(msg);
+      setTimeout(() => setErr(null), 1400);
+    },
+    [token, buyerUserId]
+  );
 
   const canInteract = !!buyerUserId;
 
@@ -278,7 +307,9 @@ export default function PaidVideoPlayerPage() {
       }
     })();
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [profileKey, videoId, videoFromRoute]);
 
   /* ---------------- playable load ---------------- */
@@ -321,7 +352,9 @@ export default function PaidVideoPlayerPage() {
     [profileKey, videoId]
   );
 
-  useEffect(() => { loadPlayable(mode); }, [mode, loadPlayable]);
+  useEffect(() => {
+    loadPlayable(mode);
+  }, [mode, loadPlayable]);
 
   /* ---------------- engagement ---------------- */
 
@@ -329,16 +362,15 @@ export default function PaidVideoPlayerPage() {
     if (!videoId) return;
 
     try {
-      console.log("[ENG] loadEngagement start", { profileKey, videoId, hasToken: !!token, buyerUserId });
+      console.log("[ENG] loadEngagement start", { profileKey, videoId, hasToken: !!token, buyerUserId, myDisplayName });
 
       const headers = {
         "Content-Type": "application/json",
         "x-profile-key": String(profileKey || ""),
+        "x-username": myDisplayName, // ✅ always send
       };
       if (token) headers.Authorization = `Bearer ${String(token)}`;
       if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
-      // ✅ send display name (backend stores it on POST comments; GET uses for logging)
-      headers["x-username"] = myDisplayName;
 
       const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}/engagement`, {
         method: "GET",
@@ -359,7 +391,9 @@ export default function PaidVideoPlayerPage() {
     }
   }, [videoId, profileKey, token, buyerUserId, myDisplayName]);
 
-  useEffect(() => { loadEngagement(); }, [loadEngagement]);
+  useEffect(() => {
+    loadEngagement();
+  }, [loadEngagement]);
 
   /* ---------------- purchase ---------------- */
 
@@ -417,7 +451,9 @@ export default function PaidVideoPlayerPage() {
     const ms = Math.floor((el.currentTime || 0) * 1000);
     if (ms >= PREVIEW_LIMIT_MS) {
       previewStoppedRef.current = true;
-      try { el.pause(); } catch {}
+      try {
+        el.pause();
+      } catch {}
       setErr(null);
       openPurchase();
     }
@@ -467,7 +503,7 @@ export default function PaidVideoPlayerPage() {
       };
       if (token) headers.Authorization = `Bearer ${String(token)}`;
 
-      console.log("[LIKE] start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, optimistic: nextLiked });
+      console.log("[LIKE] start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, myDisplayName });
 
       const res = await profileFetchRaw(profileKey, url, {
         method: "POST",
@@ -476,7 +512,6 @@ export default function PaidVideoPlayerPage() {
       });
 
       const data = await readJsonSafe(res);
-
       console.log("[LIKE] response", { ok: res.ok, status: res.status, data });
 
       if (!res.ok) {
@@ -549,7 +584,7 @@ export default function PaidVideoPlayerPage() {
       if (token) headers.Authorization = `Bearer ${String(token)}`;
       if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
 
-      console.log("[COMMENTS] load start", { profileKey, videoId, url, hasToken: !!token, buyerUserId });
+      console.log("[COMMENTS] load start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, myDisplayName });
 
       const res = await profileFetchRaw(profileKey, url, {
         method: "GET",
@@ -557,12 +592,7 @@ export default function PaidVideoPlayerPage() {
       });
 
       const data = await readJsonSafe(res);
-
-      console.log("[COMMENTS] load response", {
-        ok: res.ok,
-        status: res.status,
-        data,
-      });
+      console.log("[COMMENTS] load response", { ok: res.ok, status: res.status, data });
 
       if (!res.ok) {
         setComments([]);
@@ -572,7 +602,6 @@ export default function PaidVideoPlayerPage() {
 
       const list = Array.isArray(data?.comments) ? data.comments : [];
       setComments(list);
-
       setCommentCount(Number(data?.commentCount || 0));
     } catch (e) {
       console.log("[COMMENTS] load error", e?.message || e);
@@ -613,7 +642,7 @@ export default function PaidVideoPlayerPage() {
       };
       if (token) headers.Authorization = `Bearer ${String(token)}`;
 
-      console.log("[COMMENTS] post start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, textLen: text.length });
+      console.log("[COMMENTS] post start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, myDisplayName, textLen: text.length });
 
       const res = await profileFetchRaw(profileKey, url, {
         method: "POST",
@@ -622,7 +651,6 @@ export default function PaidVideoPlayerPage() {
       });
 
       const data = await readJsonSafe(res);
-
       console.log("[COMMENTS] post response", { ok: res.ok, status: res.status, data });
 
       if (!res.ok) {
@@ -633,6 +661,7 @@ export default function PaidVideoPlayerPage() {
       const created = data?.comment || null;
 
       if (created && typeof created === "object") {
+        // newest-first UI (matches your backend sorting)
         setComments((prev) => [created, ...(prev || [])]);
         setCommentCount(Number(data?.commentCount || 0));
       } else {
