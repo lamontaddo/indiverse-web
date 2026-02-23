@@ -1,4 +1,4 @@
-// src/pages/OwnerMusicPage.jsx ✅ FULL DROP-IN (Web) — FIXED ROUTE + ABSOLUTE API + NO CORS HEADER ISSUES
+// src/pages/OwnerMusicPage.jsx ✅ FULL DROP-IN (Web) — FREE TOGGLE + priceCents=0 support
 // Route: /world/:profileKey/owner/music
 //
 // ✅ profileKey resolution: route param -> localStorage('profileKey')
@@ -7,6 +7,12 @@
 // ✅ 401/403 -> redirect to /world/:profileKey/owner/login (preserves next)
 // ✅ parse json safely
 // ✅ S3 PUT upload via fetch(uploadUrl, { method:'PUT', body:file })
+//
+// ✅ NEW (step 1 of free entitlements work):
+// - Owner can mark Track/Album as "Free" (saves priceCents=0)
+// - Price input disables when Free is enabled
+// - If NOT free, price must be > 0
+// - List prices show "FREE" when priceCents === 0
 //
 // Requires:
 // - src/utils/ownerApi.web.js (exports ownerFetchRawWeb, ownerJsonWeb, normalizeProfileKey)
@@ -34,6 +40,12 @@ function getActiveProfileKeyWeb() {
   }
 }
 
+function priceLabelFromCents(cents) {
+  const n = Number(cents);
+  if (!Number.isFinite(n) || n <= 0) return "FREE";
+  return moneyFromCents(n);
+}
+
 function moneyFromCents(cents) {
   const n = Number(cents || 0) / 100;
   if (!Number.isFinite(n)) return "$0.00";
@@ -41,7 +53,9 @@ function moneyFromCents(cents) {
 }
 
 function toPriceCents(priceStr) {
-  const f = parseFloat(String(priceStr || "").trim());
+  const raw = String(priceStr || "").trim();
+  if (!raw) return null;
+  const f = parseFloat(raw);
   if (Number.isNaN(f) || f < 0) return null;
   return Math.round(f * 100);
 }
@@ -109,6 +123,7 @@ export default function OwnerMusicPage() {
   const [editingTrack, setEditingTrack] = useState(null);
 
   const [formTitle, setFormTitle] = useState("");
+  const [formIsFree, setFormIsFree] = useState(false);
   const [formPrice, setFormPrice] = useState("");
   const [formDuration, setFormDuration] = useState("");
   const [formPreviewSeconds, setFormPreviewSeconds] = useState("30");
@@ -125,6 +140,7 @@ export default function OwnerMusicPage() {
   const [albumOpen, setAlbumOpen] = useState(false);
   const [editingAlbum, setEditingAlbum] = useState(null);
   const [albumTitle, setAlbumTitle] = useState("");
+  const [albumIsFree, setAlbumIsFree] = useState(false);
   const [albumPrice, setAlbumPrice] = useState("");
   const [albumCoverImageUrl, setAlbumCoverImageUrl] = useState("");
   const [albumCoverImageKey, setAlbumCoverImageKey] = useState("");
@@ -204,6 +220,7 @@ export default function OwnerMusicPage() {
   const openNewAlbum = () => {
     setEditingAlbum(null);
     setAlbumTitle("");
+    setAlbumIsFree(false);
     setAlbumPrice("");
     setAlbumCoverImageUrl("");
     setAlbumCoverImageKey("");
@@ -213,7 +230,9 @@ export default function OwnerMusicPage() {
   const openEditAlbum = (a) => {
     setEditingAlbum(a);
     setAlbumTitle(a?.title || "");
-    setAlbumPrice(typeof a?.priceCents === "number" ? (a.priceCents / 100).toFixed(2) : "");
+    const pc = typeof a?.priceCents === "number" ? a.priceCents : 0;
+    setAlbumIsFree(pc <= 0);
+    setAlbumPrice(pc > 0 ? (pc / 100).toFixed(2) : "");
     setAlbumCoverImageUrl(a?.coverImageUrl || "");
     setAlbumCoverImageKey(a?.coverImageKey || "");
     setAlbumOpen(true);
@@ -225,8 +244,12 @@ export default function OwnerMusicPage() {
     const title = String(albumTitle || "").trim();
     if (!title) return alert("Missing title");
 
-    const priceCents = toPriceCents(albumPrice);
-    if (priceCents === null) return alert("Enter a valid price in dollars.");
+    let priceCents = 0;
+    if (!albumIsFree) {
+      const cents = toPriceCents(albumPrice);
+      if (cents === null || cents <= 0) return alert("Enter a valid price > 0, or mark as Free.");
+      priceCents = cents;
+    }
 
     const payload = {
       title,
@@ -325,6 +348,7 @@ export default function OwnerMusicPage() {
   const openNewTrack = () => {
     setEditingTrack(null);
     setFormTitle("");
+    setFormIsFree(false);
     setFormPrice("");
     setFormDuration("");
     setFormPreviewSeconds("30");
@@ -341,7 +365,9 @@ export default function OwnerMusicPage() {
     setEditingTrack(t);
 
     setFormTitle(t?.title || "");
-    setFormPrice(typeof t?.priceCents === "number" ? (t.priceCents / 100).toFixed(2) : "");
+    const pc = typeof t?.priceCents === "number" ? t.priceCents : 0;
+    setFormIsFree(pc <= 0);
+    setFormPrice(pc > 0 ? (pc / 100).toFixed(2) : "");
     setFormDuration(typeof t?.durationSeconds === "number" ? String(t.durationSeconds) : "");
     setFormPreviewSeconds(typeof t?.previewSeconds === "number" ? String(t.previewSeconds) : "30");
     setFormAlbumId(t?.albumId || "");
@@ -362,8 +388,12 @@ export default function OwnerMusicPage() {
     const durationNum = parseInt(formDuration, 10);
     if (!Number.isFinite(durationNum) || durationNum <= 0) return alert("Enter duration in seconds (e.g. 240)");
 
-    const priceCents = toPriceCents(formPrice);
-    if (priceCents === null) return alert("Enter a valid price in dollars.");
+    let priceCents = 0;
+    if (!formIsFree) {
+      const cents = toPriceCents(formPrice);
+      if (cents === null || cents <= 0) return alert("Enter a valid price > 0, or mark as Free.");
+      priceCents = cents;
+    }
 
     const previewNum = parseInt(formPreviewSeconds, 10);
     const previewSecondsValid = Number.isFinite(previewNum) && previewNum > 0 ? previewNum : 30;
@@ -566,7 +596,7 @@ export default function OwnerMusicPage() {
                         <div className="ocardMeta">{a.trackCount || 0} tracks</div>
                       </div>
                       <div className="oright">
-                        <div className="oprice">{moneyFromCents(a.priceCents)}</div>
+                        <div className={`oprice ${Number(a.priceCents) <= 0 ? "free" : ""}`}>{priceLabelFromCents(a.priceCents)}</div>
                         <div className="oedit">Edit</div>
                       </div>
                     </div>
@@ -585,6 +615,7 @@ export default function OwnerMusicPage() {
               <div className="olist">
                 {tracks.map((t) => {
                   const artworkUrl = t.coverImageUrl || t.albumCoverImageUrl || "";
+                  const isFree = Number(t.priceCents) <= 0;
                   return (
                     <button key={t._id} className="orow" onClick={() => openEditTrack(t)}>
                       <div className="orowLeft">
@@ -605,7 +636,7 @@ export default function OwnerMusicPage() {
                         </div>
                       </div>
                       <div className="orowRight">
-                        <div className="oprice">{moneyFromCents(t.priceCents)}</div>
+                        <div className={`oprice ${isFree ? "free" : ""}`}>{priceLabelFromCents(t.priceCents)}</div>
                         <div className="oedit">Edit</div>
                       </div>
                     </button>
@@ -654,9 +685,32 @@ export default function OwnerMusicPage() {
 
           <div className="orow2">
             <div>
-              <label className="olabel">Price (USD)</label>
-              <input className="oinput" value={formPrice} onChange={(e) => setFormPrice(e.target.value)} placeholder="1.99" />
+              <div className="olabelRow">
+                <label className="olabel">Price (USD)</label>
+                <label className="ofreeRow" title="If Free is enabled, the buyer can claim entitlement without Stripe.">
+                  <input
+                    type="checkbox"
+                    checked={formIsFree}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setFormIsFree(v);
+                      if (v) setFormPrice("");
+                    }}
+                  />
+                  <span>Free</span>
+                </label>
+              </div>
+
+              <input
+                className={`oinput ${formIsFree ? "disabled" : ""}`}
+                value={formPrice}
+                onChange={(e) => setFormPrice(e.target.value)}
+                placeholder={formIsFree ? "FREE" : "1.99"}
+                disabled={formIsFree}
+              />
+              {!formIsFree ? <div className="ohint">Enter a price &gt; 0</div> : <div className="ohint ok">Saves as priceCents = 0</div>}
             </div>
+
             <div>
               <label className="olabel">Duration (seconds)</label>
               <input className="oinput" value={formDuration} onChange={(e) => setFormDuration(e.target.value)} placeholder="240" />
@@ -761,10 +815,32 @@ export default function OwnerMusicPage() {
           <label className="olabel">Album title</label>
           <input className="oinput" value={albumTitle} onChange={(e) => setAlbumTitle(e.target.value)} placeholder="Album title" />
 
-          <label className="olabel">Price (USD)</label>
-          <input className="oinput" value={albumPrice} onChange={(e) => setAlbumPrice(e.target.value)} placeholder="9.99" />
+          <div className="olabelRow" style={{ marginTop: 6 }}>
+            <label className="olabel">Price (USD)</label>
+            <label className="ofreeRow" title="If Free is enabled, the buyer can claim entitlement without Stripe.">
+              <input
+                type="checkbox"
+                checked={albumIsFree}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setAlbumIsFree(v);
+                  if (v) setAlbumPrice("");
+                }}
+              />
+              <span>Free</span>
+            </label>
+          </div>
 
-          <label className="olabel">Album artwork</label>
+          <input
+            className={`oinput ${albumIsFree ? "disabled" : ""}`}
+            value={albumPrice}
+            onChange={(e) => setAlbumPrice(e.target.value)}
+            placeholder={albumIsFree ? "FREE" : "9.99"}
+            disabled={albumIsFree}
+          />
+          {!albumIsFree ? <div className="ohint">Enter a price &gt; 0</div> : <div className="ohint ok">Saves as priceCents = 0</div>}
+
+          <label className="olabel" style={{ marginTop: 6 }}>Album artwork</label>
           <div className="ouploadRow">
             <div className="oprev">
               {albumCoverImageUrl ? <img src={albumCoverImageUrl} alt="" /> : <div className="oprevPh">IMG</div>}
@@ -890,6 +966,7 @@ const styles = (accent = "#22d3ee") => `
 .ocardMeta{ font-size:11px; color:#9ca3af; margin-top:2px; }
 .oright{ text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
 .oprice{ font-weight:900; color:#fff; }
+.oprice.free{ color:#86efac; text-shadow: 0 0 18px rgba(74,222,128,.25); }
 .oedit{ font-size:11px; color:#9ca3af; }
 
 .olist{ display:flex; flex-direction:column; gap:10px; }
@@ -945,6 +1022,7 @@ const styles = (accent = "#22d3ee") => `
 
 .oform{ display:flex; flex-direction:column; gap:8px; }
 .olabel{ font-size:12px; color:#9ca3af; font-weight:900; letter-spacing:.2px; }
+.olabelRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .oinput{
   border-radius:12px;
   border:1px solid rgba(148,163,184,.28);
@@ -953,7 +1031,22 @@ const styles = (accent = "#22d3ee") => `
   padding:10px 10px;
   outline:none;
 }
+.oinput.disabled{ opacity:.7; cursor:not-allowed; }
 .orow2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+
+.ohint{ margin-top:6px; font-size:11px; color:#94a3b8; }
+.ohint.ok{ color:#86efac; }
+
+.ofreeRow{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color:#cbd5e1;
+  font-size:12px;
+  font-weight:900;
+  user-select:none;
+}
+.ofreeRow input{ transform: translateY(1px); }
 
 .ochips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
 .ochipBtn{
@@ -1031,5 +1124,6 @@ const styles = (accent = "#22d3ee") => `
   .orowRight{ display:none; }
   .orow{ align-items:flex-start; }
   .orowLeft{ align-items:flex-start; }
+  .olabelRow{ align-items:flex-start; flex-direction:column; gap:6px; }
 }
-`; 
+`;
