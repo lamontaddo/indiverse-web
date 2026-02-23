@@ -875,7 +875,7 @@ export default function PaidVideoPlayerPage() {
                     const id = String(c?._id || c?.id || i);
                     const name = cleanStr(c?.username || c?.userName || c?.name || c?.author || "User");
                     const text = cleanStr(c?.text || c?.body || c?.message || "");
-                    const when = cleanStr(c?.createdAt || c?.created_at || "");                    return (
+                    const when = friendlyTime(c?.createdAt || c?.created_at || "");                     return (
                       <div key={id} style={S.commentCard}>
                         <div style={S.commentTop}>
                           <div style={S.commentName} title={name}>
