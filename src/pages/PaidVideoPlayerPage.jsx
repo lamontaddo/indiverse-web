@@ -83,6 +83,31 @@ function moneyFromCents(cents, currency = "usd") {
   }
 }
 
+function friendlyTime(isoLike) {
+  const s = cleanStr(isoLike);
+  if (!s) return "";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 10) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+
+  const days = Math.floor(hr / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+
+  // older: show short date
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 /* -------------------- optional: same JWT helpers as MusicPage -------------------- */
 function isMongoObjectId(s) {
   return typeof s === "string" && /^[a-f0-9]{24}$/i.test(s.trim());
@@ -850,15 +875,13 @@ export default function PaidVideoPlayerPage() {
                     const id = String(c?._id || c?.id || i);
                     const name = cleanStr(c?.username || c?.userName || c?.name || c?.author || "User");
                     const text = cleanStr(c?.text || c?.body || c?.message || "");
-                    const when = cleanStr(c?.createdAt || c?.created_at || "");
-                    return (
+                    const when = cleanStr(c?.createdAt || c?.created_at || "");                    return (
                       <div key={id} style={S.commentCard}>
                         <div style={S.commentTop}>
                           <div style={S.commentName} title={name}>
                             {name}
                           </div>
-                          {when ? <div style={S.commentWhen}>{when}</div> : null}
-                        </div>
+                          {when ? <div style={S.commentWhen}>{when}</div> : null}                        </div>
                         <div style={S.commentText}>{text || "…"}</div>
                       </div>
                     );
