@@ -165,27 +165,17 @@ export default function AccountEntitlements() {
 
           // ---------- Paid videos (owned/free) ----------
           try {
-            const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos`, {
-              headers: headersBase,
+            // ✅ entitlements-only endpoint (must exist on backend)
+            const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos/my`, {
+              headers: headersBase, // includes Authorization Bearer token
             });
-
+          
             const pv = await pvRes.json().catch(() => null);
+          
             if (!pvRes.ok) {
-              console.log(
-                "[entitlements] paid-videos list failed",
-                r.key,
-                pv?.error || pvRes.status
-              );
+              console.log("[entitlements] paid-videos/my failed", r.key, pv?.error || pvRes.status);
             } else {
               for (const v of pv || []) {
-                // Only show:
-                // - free content
-                // - paid content that is owned (per-user)
-                const access = String(v?.access || "").toLowerCase();
-                const owned = !!v?.owned;
-
-                if (access === "paid" && !owned) continue;
-
                 out.push({
                   kind: "paid_video",
                   realmKey: r.key,
@@ -194,29 +184,31 @@ export default function AccountEntitlements() {
                   id: v?._id,
                   title: safeTrim(v?.title) || "Paid Video",
                   coverUrl: v?.thumbnailUrl || null,
-                  meta: { access: v?.access || "free", owned },
+                  meta: {
+                    access: v?.access || "paid",
+                    owned: true, // because /my should only return owned/free entitlements
+                  },
                 });
               }
             }
           } catch (e) {
-            console.log("[entitlements] paid-videos list error", r.key, e?.message);
+            console.log("[entitlements] paid-videos/my error", r.key, e?.message);
           }
 
           // ---------- Music (catalog -> unlocked tracks) ----------
           try {
-            const mRes = await fetch(`${r.apiBaseUrl}/api/music/catalog`, {
-              headers: headersBase,
+            // ✅ entitlements-only endpoint (must exist on backend)
+            const mRes = await fetch(`${r.apiBaseUrl}/api/music/entitlements`, {
+              headers: headersBase, // includes Authorization Bearer token
             });
-
+          
             const m = await mRes.json().catch(() => null);
+          
             if (!mRes.ok || !m?.ok) {
-              console.log("[entitlements] music catalog failed", r.key, m?.error || mRes.status);
+              console.log("[entitlements] music/entitlements failed", r.key, m?.error || mRes.status);
             } else {
               const tracks = Array.isArray(m?.tracks) ? m.tracks : [];
               for (const t of tracks) {
-                // Only show unlocked
-                if (!t?.isUnlocked) continue;
-
                 out.push({
                   kind: "music_track",
                   realmKey: r.key,
@@ -225,14 +217,14 @@ export default function AccountEntitlements() {
                   id: t?._id,
                   title: safeTrim(t?.title) || "Track",
                   subtitle: safeTrim(t?.albumTitle) || "Single",
-                  artist: safeTrim(t?.artist) || safeTrim(t?.artistName) || "",
+                  artist: safeTrim(t?.artist) || "",
                   coverUrl: t?.coverImageUrl || null,
                   durationSeconds: t?.durationSeconds ?? null,
                 });
               }
             }
           } catch (e) {
-            console.log("[entitlements] music catalog error", r.key, e?.message);
+            console.log("[entitlements] music/entitlements error", r.key, e?.message);
           }
         }
 
