@@ -342,11 +342,34 @@ useEffect(() => {
     [ensureAuthed, profileKey, token, buyerUserId]
   );
 
-  const openCheckoutUrl = useCallback(async (url) => {
-    const u = String(url || "").trim();
-    if (!u) throw new Error("Missing checkout url");
-    window.open(u, "_blank", "noopener,noreferrer");
-  }, []);
+  // const openCheckoutUrl = useCallback(async (url) => {
+  //   const u = String(url || "").trim();
+  //   if (!u) throw new Error("Missing checkout url");
+  
+  //   // ✅ Mobile-safe popup pattern:
+  //   // Open a blank window immediately (must be in user gesture),
+  //   // then set its location after we have the URL.
+  //   let win = null;
+  //   try {
+  //     win = window.open("about:blank", "_blank");
+  //   } catch {
+  //     win = null;
+  //   }
+  
+  //   // If popup blocked, fall back to same-tab navigation (always works)
+  //   if (!win) {
+  //     window.location.href = u;
+  //     return;
+  //   }
+  
+  //   // Some browsers need this in a try
+  //   try {
+  //     win.location.href = u;
+  //     win.focus?.();
+  //   } catch {
+  //     window.location.href = u;
+  //   }
+  // }, []);
 
   const startTrack = useCallback(
     async (track, preview = true) => {
@@ -472,33 +495,78 @@ useEffect(() => {
   const unlockTrack = useCallback(
     async (track) => {
       if (!ensureAuthed()) return;
+  
+      // ✅ Open tab immediately on click (strongest for mobile)
+      let win = null;
+      try {
+        win = window.open("about:blank", "_blank");
+      } catch {
+        win = null;
+      }
+  
       const ok = confirm(`Open checkout to unlock "${track.title}"?`);
-      if (!ok) return;
-
+      if (!ok) {
+        try { win?.close?.(); } catch {}
+        return;
+      }
+  
       try {
         const url = await createCheckoutSession({ itemType: "track", itemId: String(track._id) });
-        await openCheckoutUrl(url);
+  
+        if (win) {
+          try {
+            win.location.href = url;
+            win.focus?.();
+          } catch {
+            window.location.href = url;
+          }
+        } else {
+          window.location.href = url;
+        }
       } catch (e) {
+        try { win?.close?.(); } catch {}
         alert(e?.message || "Could not start checkout.");
       }
     },
-    [ensureAuthed, createCheckoutSession, openCheckoutUrl]
+    [ensureAuthed, createCheckoutSession]
   );
-
+  
   const unlockAlbum = useCallback(
     async (album) => {
       if (!ensureAuthed()) return;
+  
+      let win = null;
+      try {
+        win = window.open("about:blank", "_blank");
+      } catch {
+        win = null;
+      }
+  
       const ok = confirm(`Open checkout to unlock album "${album.title}"?`);
-      if (!ok) return;
-
+      if (!ok) {
+        try { win?.close?.(); } catch {}
+        return;
+      }
+  
       try {
         const url = await createCheckoutSession({ itemType: "album", itemId: String(album._id) });
-        await openCheckoutUrl(url);
+  
+        if (win) {
+          try {
+            win.location.href = url;
+            win.focus?.();
+          } catch {
+            window.location.href = url;
+          }
+        } else {
+          window.location.href = url;
+        }
       } catch (e) {
+        try { win?.close?.(); } catch {}
         alert(e?.message || "Could not start checkout.");
       }
     },
-    [ensureAuthed, createCheckoutSession, openCheckoutUrl]
+    [ensureAuthed, createCheckoutSession]
   );
 
   const handleBack = useCallback(() => {
