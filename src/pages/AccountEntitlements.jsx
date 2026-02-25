@@ -1,11 +1,9 @@
-// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (ENTITLEMENTS ONLY)
-// ✅ userId comes from buyerToken (JWT)
-// ✅ Uses entitlements-only endpoints:
-//    - GET /api/paid-videos/my
-//    - GET /api/music/entitlements
-// ✅ Handles both array and { ok, items } response shapes
-// ✅ Clears ghost sessions if token invalid
-// ✅ Authorization is primary; x-user-id is backcompat only
+// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (HARDENED IDENTITY + ENTITLEMENT SAFETY)
+// ✅ userId comes from buyerToken (JWT) — NOT buyerUserId/buyerUser storage
+// ✅ Clears stale auth storage if token invalid
+// ✅ Sends x-user-id only as BACKCOMPAT (from token), but Authorization is primary
+// ✅ FIX: paid-videos/my parses { ok:true, videos:[...] } (and also supports legacy array response)
+// ✅ UI + grouping + music search + playback logic kept intact (styles included)
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -27,6 +25,7 @@ function base64UrlDecode(str) {
     const s = String(str || "").replace(/-/g, "+").replace(/_/g, "/");
     const pad = s.length % 4 ? "=".repeat(4 - (s.length % 4)) : "";
     const raw = atob(s + pad);
+    // handle UTF-8
     const bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
     const dec = new TextDecoder().decode(bytes);
     return dec;
@@ -55,16 +54,19 @@ function readUserIdFromBuyerToken() {
   const payload = decodeJwt(token);
   if (!payload) return null;
 
+  // support common claim keys
   const id =
     safeTrim(payload.userId) ||
     safeTrim(payload.id) ||
     safeTrim(payload.sub) ||
     safeTrim(payload.uid);
 
+  // basic sanity: mongodb-ish ids are 24 hex; but allow others
   return id || null;
 }
 
 function clearBuyerAuthStorage() {
+  // keep it explicit so you don’t end up “half logged in”
   localStorage.removeItem("buyerToken");
   localStorage.removeItem("buyerUser");
   localStorage.removeItem("buyerUserId");
@@ -108,42 +110,32 @@ async function fetchRemoteConfig() {
   return res.json();
 }
 
-// ✅ normalize endpoint payloads (array OR {ok, items})
-function toArrayPayload(data, keys = []) {
-  if (Array.isArray(data)) return data;
-  if (!data || typeof data !== "object") return [];
-  for (const k of keys) {
-    if (Array.isArray(data[k])) return data[k];
-  }
+// ✅ helper: supports both array response and { ok, videos } response
+function normalizePaidVideosResponse(pv) {
+  if (Array.isArray(pv)) return pv;
+  if (pv && Array.isArray(pv.videos)) return pv.videos;
   return [];
 }
 
 export default function AccountEntitlements() {
   const nav = useNavigate();
-
-  // ✅ make authed reactive (so switching accounts actually updates)
-  const [authed, setAuthed] = useState(isAuthedNow());
+  const authed = useMemo(isAuthedNow, []);
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  const [videoPlayer, setVideoPlayer] = useState(null);
-  const [audioPlayer, setAudioPlayer] = useState(null);
+  // 🎬 video player
+  const [videoPlayer, setVideoPlayer] = useState(null); // { title, url }
+
+  // 🎵 audio player
+  const [audioPlayer, setAudioPlayer] = useState(null); // { title, subtitle?, coverUrl?, url, mode }
+
+  // 🔎 music search
   const [musicQuery, setMusicQuery] = useState("");
 
   const token = safeTrim(localStorage.getItem("buyerToken"));
   const userId = useMemo(() => readUserIdFromBuyerToken(), [token]);
-
-  useEffect(() => {
-    const onStorage = () => setAuthed(isAuthedNow());
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  useEffect(() => {
-    setAuthed(isAuthedNow());
-  }, [token]);
 
   useEffect(() => {
     if (!authed) {
@@ -151,7 +143,7 @@ export default function AccountEntitlements() {
       return;
     }
 
-    // ghost session guard
+    // If token is missing/invalid but authed flag exists, kill the “ghost session”
     if (!token || !userId) {
       clearBuyerAuthStorage();
       nav("/auth/login?next=/account/entitlements");
@@ -172,24 +164,35 @@ export default function AccountEntitlements() {
         for (const r of realms) {
           const headersBase = {
             "x-profile-key": r.key,
-            "x-user-id": userId, // BACKCOMPAT ONLY
+            // BACKCOMPAT ONLY — sourced from token, never from localStorage
+            "x-user-id": userId,
             Authorization: token ? `Bearer ${token}` : "",
             "Cache-Control": "no-cache",
             Pragma: "no-cache",
           };
 
-          // ---------- Paid videos (entitlements-only) ----------
+          // ---------- Paid videos (owned/free) ----------
           try {
             const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos/my`, {
               headers: headersBase,
             });
 
-            const pvJson = await pvRes.json().catch(() => null);
+            const pv = await pvRes.json().catch(() => null);
 
             if (!pvRes.ok) {
-              console.log("[entitlements] paid-videos/my failed", r.key, pvJson?.error || pvRes.status);
+              console.log(
+                "[entitlements] paid-videos/my failed",
+                r.key,
+                pv?.error || pvRes.status
+              );
+            } else if (pv && pv.ok === false) {
+              console.log(
+                "[entitlements] paid-videos/my returned ok:false",
+                r.key,
+                pv?.error || "unknown"
+              );
             } else {
-              const pvList = toArrayPayload(pvJson, ["videos", "items", "data"]);
+              const pvList = normalizePaidVideosResponse(pv);
               for (const v of pvList) {
                 out.push({
                   kind: "paid_video",
@@ -198,8 +201,11 @@ export default function AccountEntitlements() {
                   apiBaseUrl: r.apiBaseUrl,
                   id: v?._id,
                   title: safeTrim(v?.title) || "Paid Video",
-                  coverUrl: v?.thumbnailUrl || v?.coverUrl || null,
-                  meta: { access: v?.access || "paid", owned: true },
+                  coverUrl: v?.thumbnailUrl || null,
+                  meta: {
+                    access: safeTrim(v?.access) || "paid",
+                    owned: true,
+                  },
                 });
               }
             }
@@ -207,18 +213,22 @@ export default function AccountEntitlements() {
             console.log("[entitlements] paid-videos/my error", r.key, e?.message);
           }
 
-          // ---------- Music (entitlements-only) ----------
+          // ---------- Music (entitlements endpoint) ----------
           try {
             const mRes = await fetch(`${r.apiBaseUrl}/api/music/entitlements`, {
               headers: headersBase,
             });
 
-            const mJson = await mRes.json().catch(() => null);
+            const m = await mRes.json().catch(() => null);
 
-            if (!mRes.ok || !mJson?.ok) {
-              console.log("[entitlements] music/entitlements failed", r.key, mJson?.error || mRes.status);
+            if (!mRes.ok || !m?.ok) {
+              console.log(
+                "[entitlements] music/entitlements failed",
+                r.key,
+                m?.error || mRes.status
+              );
             } else {
-              const tracks = toArrayPayload(mJson, ["tracks", "items", "data"]);
+              const tracks = Array.isArray(m?.tracks) ? m.tracks : [];
               for (const t of tracks) {
                 out.push({
                   kind: "music_track",
@@ -228,7 +238,7 @@ export default function AccountEntitlements() {
                   id: t?._id,
                   title: safeTrim(t?.title) || "Track",
                   subtitle: safeTrim(t?.albumTitle) || "Single",
-                  artist: safeTrim(t?.artist) || safeTrim(t?.artistName) || "",
+                  artist: safeTrim(t?.artist) || "",
                   coverUrl: t?.coverImageUrl || null,
                   durationSeconds: t?.durationSeconds ?? null,
                 });
@@ -251,6 +261,7 @@ export default function AccountEntitlements() {
     load();
   }, [authed, nav, token, userId]);
 
+  // ---------- Grouping ----------
   const videos = useMemo(() => (items || []).filter((x) => x.kind === "paid_video"), [items]);
   const musicAll = useMemo(() => (items || []).filter((x) => x.kind === "music_track"), [items]);
 
@@ -266,6 +277,7 @@ export default function AccountEntitlements() {
     });
   }, [musicAll, musicQuery]);
 
+  // ---------- Play handlers ----------
   const openPaidVideo = async (it) => {
     try {
       const url = `${it.apiBaseUrl}/api/paid-videos/${encodeURIComponent(it.id)}/play?mode=full`;
@@ -307,6 +319,7 @@ export default function AccountEntitlements() {
       const base = it.apiBaseUrl;
       const id = encodeURIComponent(it.id);
 
+      // try full first
       const fullUrl = `${base}/api/music/tracks/${id}/stream?mode=full`;
       let res = await fetch(fullUrl, {
         headers: {
@@ -320,6 +333,7 @@ export default function AccountEntitlements() {
 
       let data = await res.json().catch(() => null);
 
+      // fallback to preview on locked (403)
       if (res.status === 403 || data?.locked || data?.previewOnly) {
         const prevUrl = `${base}/api/music/tracks/${id}/stream?mode=preview`;
         res = await fetch(prevUrl, {
@@ -364,7 +378,6 @@ export default function AccountEntitlements() {
 
   if (!authed) return null;
 
-  // ✅ UI/STYLES: unchanged from your version
   return (
     <div className="ivRoot">
       <div className="ivBg" />
@@ -556,7 +569,324 @@ export default function AccountEntitlements() {
         </div>
       )}
 
-      <style>{`/* YOUR STYLES UNCHANGED - paste your existing <style> block here exactly */`}</style>
+      <style>{`
+        .ivRoot{
+          min-height:100vh;
+          position:relative;
+          overflow:hidden;
+          color:#fff;
+          font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+          background:#03040a;
+        }
+        .ivBg{
+          position:fixed;
+          inset:0;
+          background:
+            radial-gradient(1200px 700px at 50% 0%, rgba(0,255,255,0.10), transparent 55%),
+            radial-gradient(900px 500px at 15% 25%, rgba(124,58,237,0.10), transparent 55%),
+            radial-gradient(900px 500px at 85% 35%, rgba(59,130,246,0.10), transparent 55%),
+            linear-gradient(180deg, #0b1020, #090b14, #06070d);
+          z-index:0;
+        }
+        .ivStars{
+          position:fixed;
+          inset:0;
+          background-image:
+            radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.45) 0, transparent 2px),
+            radial-gradient(1px 1px at 30% 80%, rgba(255,255,255,0.35) 0, transparent 2px),
+            radial-gradient(1px 1px at 70% 30%, rgba(255,255,255,0.30) 0, transparent 2px),
+            radial-gradient(1px 1px at 85% 70%, rgba(255,255,255,0.28) 0, transparent 2px),
+            radial-gradient(1px 1px at 55% 55%, rgba(255,255,255,0.22) 0, transparent 2px);
+          opacity:0.55;
+          z-index:0;
+          pointer-events:none;
+        }
+        .ivWrap{
+          position:relative;
+          z-index:1;
+          max-width: 980px;
+          margin: 0 auto;
+          padding: 18px 16px 60px;
+        }
+        .topRow{
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+          gap:10px;
+          margin-bottom:14px;
+        }
+        .pillBtn{
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(0,0,0,.24);
+          color:rgba(255,255,255,.92);
+          padding:10px 14px;
+          border-radius:999px;
+          cursor:pointer;
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 18px 24px rgba(0,0,0,0.35);
+        }
+        .pillBtn:active{ transform: scale(0.99); opacity:0.95; }
+
+        .hdr{ margin: 8px 0 14px; }
+        .h1{ font-size: 24px; font-weight: 900; letter-spacing: 0.2px; }
+        .h2{ margin-top: 6px; opacity: 0.72; font-size: 13px; }
+
+        .glassCard{
+          padding: 14px;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.28);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          box-shadow: 0 22px 30px rgba(0,0,0,0.35);
+          margin-bottom: 12px;
+        }
+
+        .err{
+          color:#ffb3b3;
+          padding:12px;
+          border-radius:16px;
+          border:1px solid rgba(255,80,80,.25);
+          background: rgba(255,80,80,.08);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          margin-bottom:12px;
+        }
+
+        .section{
+          margin-top: 14px;
+          padding: 14px;
+          border-radius: 22px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.22);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          box-shadow: 0 26px 34px rgba(0,0,0,0.38);
+        }
+
+        .sectionHead{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          margin-bottom: 12px;
+        }
+
+        .sectionTitle{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          font-weight: 900;
+          font-size: 14px;
+          letter-spacing: 0.3px;
+          opacity: 0.95;
+          text-transform: uppercase;
+        }
+
+        .sectionIcon{
+          width: 30px;
+          height: 30px;
+          border-radius: 12px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          box-shadow: 0 18px 22px rgba(0,0,0,0.28);
+        }
+
+        .sectionCount{
+          font-size: 12px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.80);
+        }
+
+        .searchWrap{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          padding: 10px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.22);
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          margin-bottom: 12px;
+        }
+        .searchIcon{ opacity: 0.75; }
+        .searchInput{
+          flex:1;
+          background: transparent;
+          border: none;
+          outline: none;
+          color: #fff;
+          font-size: 14px;
+        }
+        .clearBtn{
+          border:none;
+          background: rgba(255,255,255,0.08);
+          color: rgba(255,255,255,0.9);
+          border-radius: 12px;
+          padding: 6px 10px;
+          cursor:pointer;
+        }
+
+        .list{
+          display:flex;
+          flex-direction:column;
+          gap: 10px;
+        }
+
+        .row{
+          width: 100%;
+          text-align:left;
+          padding: 12px;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(0,0,0,0.20);
+          cursor:pointer;
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+          transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
+        }
+        .row:hover{ border-color: rgba(0,255,255,0.16); }
+        .row:active{ transform: scale(0.995); opacity: 0.96; }
+
+        .rowInner{
+          display:flex;
+          align-items:center;
+          gap: 12px;
+        }
+
+        .thumb{
+          width: 48px;
+          height: 48px;
+          border-radius: 16px;
+          overflow:hidden;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.05);
+          position: relative;
+          flex: 0 0 auto;
+        }
+        .thumb img{ width:100%; height:100%; object-fit: cover; display:block; }
+        .thumbFallback{ width:100%; height:100%; background: rgba(255,255,255,0.06); }
+        .thumbGlow{
+          position:absolute;
+          inset:-40%;
+          background: radial-gradient(circle at 50% 50%, rgba(0,255,255,0.16), transparent 60%);
+          pointer-events:none;
+          opacity: 0.7;
+        }
+
+        .txt{ flex:1; min-width:0; }
+        .title{ font-weight: 900; letter-spacing: 0.15px; line-height: 1.15; }
+        .meta{
+          margin-top: 6px;
+          opacity: 0.72;
+          font-size: 12px;
+          white-space: nowrap;
+          overflow:hidden;
+          text-overflow: ellipsis;
+        }
+
+        .chip{
+          flex: 0 0 auto;
+          width: 36px;
+          height: 36px;
+          border-radius: 14px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          box-shadow: 0 18px 22px rgba(0,0,0,0.28);
+        }
+        .chipMusic{ border-color: rgba(0,255,255,0.14); }
+        .chipIcon{ opacity: 0.9; font-weight: 900; }
+
+        .emptyGlass{
+          padding: 16px;
+          border-radius: 18px;
+          border: 1px dashed rgba(255,255,255,0.12);
+          background: rgba(0,0,0,0.18);
+        }
+        .emptyTitle{ font-weight: 900; }
+        .emptySub{ margin-top: 6px; opacity: 0.72; font-size: 13px; }
+
+        .modal{
+          position:fixed;
+          inset:0;
+          background: rgba(0,0,0,0.78);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          z-index:999;
+          padding:16px;
+        }
+        .modalInner{
+          width: min(900px, 92vw);
+          background: rgba(0,0,0,0.92);
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          overflow:hidden;
+          padding: 12px;
+          box-shadow: 0 30px 40px rgba(0,0,0,0.45);
+        }
+        .modalTop{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          margin-bottom: 10px;
+        }
+        .modalTitle{ font-weight: 900; font-size: 14px; opacity: 0.96; }
+        .modeTag{ opacity: 0.7; font-weight: 800; margin-left: 10px; font-size: 12px; }
+        .xBtn{
+          border:none;
+          background: rgba(255,255,255,0.08);
+          color: rgba(255,255,255,0.9);
+          border-radius: 12px;
+          padding: 6px 10px;
+          cursor:pointer;
+        }
+
+        .audioHead{
+          display:flex;
+          align-items:center;
+          gap:12px;
+          margin: 6px 0 10px;
+        }
+        .audioCover{
+          width: 64px;
+          height: 64px;
+          border-radius: 18px;
+          overflow:hidden;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.05);
+          position: relative;
+          flex: 0 0 auto;
+        }
+        .audioCover img{ width:100%; height:100%; object-fit:cover; display:block; }
+        .audioMeta{ min-width:0; }
+        .audioTitle{ font-weight: 900; }
+        .audioSub{
+          margin-top: 6px;
+          opacity: 0.72;
+          font-size: 12px;
+          white-space: nowrap;
+          overflow:hidden;
+          text-overflow: ellipsis;
+        }
+
+        @media (min-width: 980px){
+          .ivWrap{ padding-top: 22px; }
+          .h1{ font-size: 26px; }
+        }
+      `}</style>
     </div>
   );
 }
