@@ -1,6 +1,10 @@
 // src/pages/PaidVideoPlayerPage.jsx ✅ FULL DROP-IN (Web / Vite)
 // Route: /world/:profileKey/paid-videos/:videoId
 //
+// ✅ Mobile fix: action bar is horizontally scrollable + subtle left/right fade hints
+// - Shows fades only when content overflows
+// - Fades auto-hide when you’ve scrolled to an edge
+//
 // ✅ FIX: comments show username (REAL name, not always "User")
 // - Web sends x-username on GET engagement + POST comments (and like)
 // - Display name derives from: buyerUsername -> buyerUser(first/last/name/username) -> JWT -> "User"
@@ -104,7 +108,6 @@ function friendlyTime(isoLike) {
   if (days === 1) return "yesterday";
   if (days < 7) return `${days}d ago`;
 
-  // older: show short date
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -168,10 +171,7 @@ function deriveDisplayNameFromBuyerUser() {
   if (!u) return "";
 
   const full = cleanDisplayName(`${u?.firstName || ""} ${u?.lastName || ""}`);
-  return (
-    full ||
-    cleanDisplayName(u?.displayName || u?.name || u?.username || u?.userName || "")
-  );
+  return full || cleanDisplayName(u?.displayName || u?.name || u?.username || u?.userName || "");
 }
 
 function deriveDisplayNameFromToken(token) {
@@ -181,12 +181,7 @@ function deriveDisplayNameFromToken(token) {
 }
 
 function getMyDisplayName(token) {
-  return (
-    getLocalDisplayName() ||
-    deriveDisplayNameFromBuyerUser() || // ✅ KEY FIX
-    deriveDisplayNameFromToken(token) ||
-    "User"
-  );
+  return getLocalDisplayName() || deriveDisplayNameFromBuyerUser() || deriveDisplayNameFromToken(token) || "User";
 }
 
 // ✅ uses your existing checkout route (same one MusicPage uses)
@@ -667,7 +662,15 @@ export default function PaidVideoPlayerPage() {
       };
       if (token) headers.Authorization = `Bearer ${String(token)}`;
 
-      console.log("[COMMENTS] post start", { profileKey, videoId, url, hasToken: !!token, buyerUserId, myDisplayName, textLen: text.length });
+      console.log("[COMMENTS] post start", {
+        profileKey,
+        videoId,
+        url,
+        hasToken: !!token,
+        buyerUserId,
+        myDisplayName,
+        textLen: text.length,
+      });
 
       const res = await profileFetchRaw(profileKey, url, {
         method: "POST",
@@ -686,7 +689,6 @@ export default function PaidVideoPlayerPage() {
       const created = data?.comment || null;
 
       if (created && typeof created === "object") {
-        // newest-first UI (matches your backend sorting)
         setComments((prev) => [created, ...(prev || [])]);
         setCommentCount(Number(data?.commentCount || 0));
       } else {
@@ -714,6 +716,48 @@ export default function PaidVideoPlayerPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  /* ---------------- Action bar fade hints ---------------- */
+
+  const actionBarRef = useRef(null);
+  const [showLeftFade, setShowLeftFade] = useState(false);
+  const [showRightFade, setShowRightFade] = useState(false);
+
+  const updateActionFades = useCallback(() => {
+    const el = actionBarRef.current;
+    if (!el) return;
+
+    // content overflow?
+    const maxScroll = Math.max(0, (el.scrollWidth || 0) - (el.clientWidth || 0));
+    const x = el.scrollLeft || 0;
+
+    // Only show fades when it can scroll
+    if (maxScroll <= 2) {
+      setShowLeftFade(false);
+      setShowRightFade(false);
+      return;
+    }
+
+    setShowLeftFade(x > 2);
+    setShowRightFade(x < maxScroll - 2);
+  }, []);
+
+  useEffect(() => {
+    updateActionFades();
+    const onResize = () => updateActionFades();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, [updateActionFades]);
+
+  useEffect(() => {
+    // when Buy appears/disappears, re-evaluate fades
+    const t = setTimeout(updateActionFades, 50);
+    return () => clearTimeout(t);
+  }, [isLocked, liked, likeCount, commentCount, updateActionFades]);
 
   /* ---------------- render ---------------- */
 
@@ -771,34 +815,46 @@ export default function PaidVideoPlayerPage() {
         )}
       </div>
 
-      <div style={S.actionBar}>
-        <button onClick={toggleLike} style={{ ...S.actionBtn, ...(liked ? S.actionBtnActive : {}) }} title="Like">
-          <span style={S.actionIcon}>{liked ? "❤️" : "🤍"}</span>
-          <span style={S.actionText}>Like</span>
-          <span style={S.actionCount}>{fmtCount(likeCount)}</span>
-        </button>
+      {/* ✅ SCROLLABLE ACTION BAR + FADE HINTS */}
+      <div
+        ref={actionBarRef}
+        style={S.actionBar}
+        onScroll={updateActionFades}
+        aria-label="Actions"
+      >
+        {/* fades (pointerEvents none so buttons remain clickable) */}
+        {showLeftFade ? <div style={S.actionFadeLeft} aria-hidden /> : null}
+        {showRightFade ? <div style={S.actionFadeRight} aria-hidden /> : null}
 
-        <button
-          onClick={() => (canInteract ? setCommentsOpen(true) : requireLoginToast("Please sign in to comment."))}
-          style={S.actionBtn}
-          title={canInteract ? "Comments" : "Sign in to comment"}
-        >
-          <span style={S.actionIcon}>💬</span>
-          <span style={S.actionText}>Comments</span>
-          <span style={S.actionCount}>{fmtCount(commentCount)}</span>
-        </button>
-
-        <button onClick={share} style={S.actionBtn} title="Share">
-          <span style={S.actionIcon}>🔗</span>
-          <span style={S.actionText}>Share</span>
-        </button>
-
-        {isLocked ? (
-          <button onClick={openPurchase} style={{ ...S.actionBtn, ...S.buyBtn }} title="Buy full access">
-            <span style={S.actionIcon}>🛒</span>
-            <span style={S.actionText}>Buy</span>
+        <div style={S.actionBarTrack}>
+          <button onClick={toggleLike} style={{ ...S.actionBtn, ...(liked ? S.actionBtnActive : {}) }} title="Like">
+            <span style={S.actionIcon}>{liked ? "❤️" : "🤍"}</span>
+            <span style={S.actionText}>Like</span>
+            <span style={S.actionCount}>{fmtCount(likeCount)}</span>
           </button>
-        ) : null}
+
+          <button
+            onClick={() => (canInteract ? setCommentsOpen(true) : requireLoginToast("Please sign in to comment."))}
+            style={S.actionBtn}
+            title={canInteract ? "Comments" : "Sign in to comment"}
+          >
+            <span style={S.actionIcon}>💬</span>
+            <span style={S.actionText}>Comments</span>
+            <span style={S.actionCount}>{fmtCount(commentCount)}</span>
+          </button>
+
+          <button onClick={share} style={S.actionBtn} title="Share">
+            <span style={S.actionIcon}>🔗</span>
+            <span style={S.actionText}>Share</span>
+          </button>
+
+          {isLocked ? (
+            <button onClick={openPurchase} style={{ ...S.actionBtn, ...S.buyBtn }} title="Buy full access">
+              <span style={S.actionIcon}>🛒</span>
+              <span style={S.actionText}>Buy</span>
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {purchaseOpen ? (
@@ -875,13 +931,15 @@ export default function PaidVideoPlayerPage() {
                     const id = String(c?._id || c?.id || i);
                     const name = cleanStr(c?.username || c?.userName || c?.name || c?.author || "User");
                     const text = cleanStr(c?.text || c?.body || c?.message || "");
-                    const when = friendlyTime(c?.createdAt || c?.created_at || "");                     return (
+                    const when = friendlyTime(c?.createdAt || c?.created_at || "");
+                    return (
                       <div key={id} style={S.commentCard}>
                         <div style={S.commentTop}>
                           <div style={S.commentName} title={name}>
                             {name}
                           </div>
-                          {when ? <div style={S.commentWhen}>{when}</div> : null}                        </div>
+                          {when ? <div style={S.commentWhen}>{when}</div> : null}
+                        </div>
                         <div style={S.commentText}>{text || "…"}</div>
                       </div>
                     );
@@ -1020,8 +1078,6 @@ const S = {
     borderRadius: 18,
     border: "1px solid rgba(255,255,255,0.08)",
     boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
-  
-   
     filter: "brightness(1.12) contrast(1.03)",
   },
 
@@ -1055,17 +1111,60 @@ const S = {
     animation: "pvspin 0.9s linear infinite",
   },
 
+  /* ✅ scrollable action bar */
   actionBar: {
     position: "fixed",
     left: 0,
     right: 0,
-    bottom: 18,
+    bottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
     zIndex: 12,
-    display: "flex",
-    justifyContent: "center",
+
+    overflowX: "auto",
+    overflowY: "hidden",
+    WebkitOverflowScrolling: "touch",
+
     padding: "0 14px",
-    pointerEvents: "none",
+    pointerEvents: "auto",
+    scrollSnapType: "x mandatory",
+
+    // hide scrollbar (best effort)
+    scrollbarWidth: "none",
   },
+
+  actionBarTrack: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    width: "max-content",
+    paddingBottom: 2,
+    whiteSpace: "nowrap",
+    paddingRight: 6, // small buffer so last button isn’t tight to edge
+  },
+
+  // subtle fade hints
+  actionFadeLeft: {
+    position: "sticky",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 28,
+    marginLeft: -14, // aligns with padding
+    pointerEvents: "none",
+    background: "linear-gradient(to right, rgba(0,0,0,0.92), rgba(0,0,0,0))",
+    zIndex: 2,
+  },
+  actionFadeRight: {
+    position: "sticky",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 28,
+    marginRight: -14,
+    pointerEvents: "none",
+    background: "linear-gradient(to left, rgba(0,0,0,0.92), rgba(0,0,0,0))",
+    zIndex: 2,
+  },
+
   actionBtn: {
     pointerEvents: "auto",
     display: "inline-flex",
@@ -1080,8 +1179,9 @@ const S = {
     cursor: "pointer",
     fontWeight: 900,
     letterSpacing: 0.2,
-    margin: "0 6px",
     boxShadow: "0 18px 40px rgba(0,0,0,0.50)",
+    flex: "0 0 auto",
+    scrollSnapAlign: "center",
   },
   actionBtnActive: {
     border: "1px solid rgba(255,255,255,0.22)",
@@ -1306,9 +1406,14 @@ const S = {
   },
 };
 
+// keyframes injection (unchanged)
 if (typeof document !== "undefined" && !document.getElementById("pvspin-style")) {
   const s = document.createElement("style");
   s.id = "pvspin-style";
-  s.textContent = `@keyframes pvspin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`;
+  s.textContent = `
+    @keyframes pvspin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+    /* hide scrollbar webkit */
+    [aria-label="Actions"]::-webkit-scrollbar { display: none; height: 0; width: 0; }
+  `;
   document.head.appendChild(s);
 }
