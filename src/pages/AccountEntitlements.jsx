@@ -1,24 +1,14 @@
-// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (UI UPGRADE: Grouped + Music Search + IndiVerse feel)
-// ✅ Groups: Videos + Music
-// ✅ Search bar filters MUSIC (title / subtitle / realm / (future: artist))
-// ✅ Keeps thumbnails + play/music icons
-// ✅ Keeps Vault playback logic untouched
+// src/pages/AccountEntitlements.jsx ✅ FULL DROP-IN (HARDENED IDENTITY + ENTITLEMENT SAFETY)
+// ✅ userId comes from buyerToken (JWT) — NOT buyerUserId/buyerUser storage
+// ✅ Clears stale auth storage if token invalid
+// ✅ Sends x-user-id only as BACKCOMPAT (from token), but Authorization is primary
+// ✅ UI + grouping + music search + playback logic kept intact
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 function safeTrim(v) {
   return String(v || "").trim();
-}
-
-function readBuyerUser() {
-  try {
-    const raw = localStorage.getItem("buyerUser");
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
 }
 
 function isAuthedNow() {
@@ -28,17 +18,58 @@ function isAuthedNow() {
   );
 }
 
-const REMOTE_CONFIG_URL =
-  import.meta.env.VITE_REMOTE_CONFIG_URL ||
-  "https://montech-remote-config.s3.amazonaws.com/superapp/config.json";
+// ---- JWT decode (no deps) ----
+function base64UrlDecode(str) {
+  try {
+    const s = String(str || "").replace(/-/g, "+").replace(/_/g, "/");
+    const pad = s.length % 4 ? "=".repeat(4 - (s.length % 4)) : "";
+    const raw = atob(s + pad);
+    // handle UTF-8
+    const bytes = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    const dec = new TextDecoder().decode(bytes);
+    return dec;
+  } catch {
+    return null;
+  }
+}
 
-async function fetchRemoteConfig() {
-  const res = await fetch(`${REMOTE_CONFIG_URL}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
-  });
-  if (!res.ok) throw new Error(`remote config failed (${res.status})`);
-  return res.json();
+function decodeJwt(token) {
+  try {
+    const t = safeTrim(token);
+    const parts = t.split(".");
+    if (parts.length !== 3) return null;
+    const payloadStr = base64UrlDecode(parts[1]);
+    if (!payloadStr) return null;
+    return JSON.parse(payloadStr);
+  } catch {
+    return null;
+  }
+}
+
+function readUserIdFromBuyerToken() {
+  const token = safeTrim(localStorage.getItem("buyerToken"));
+  if (!token) return null;
+
+  const payload = decodeJwt(token);
+  if (!payload) return null;
+
+  // support common claim keys
+  const id =
+    safeTrim(payload.userId) ||
+    safeTrim(payload.id) ||
+    safeTrim(payload.sub) ||
+    safeTrim(payload.uid);
+
+  // basic sanity: mongodb-ish ids are 24 hex; but allow others
+  return id || null;
+}
+
+function clearBuyerAuthStorage() {
+  // keep it explicit so you don’t end up “half logged in”
+  localStorage.removeItem("buyerToken");
+  localStorage.removeItem("buyerUser");
+  localStorage.removeItem("buyerUserId");
+  localStorage.removeItem("auth:isAuthed");
 }
 
 function normalizeProfiles(cfg) {
@@ -65,9 +96,21 @@ function normSearch(s) {
   return safeTrim(s).toLowerCase();
 }
 
+const REMOTE_CONFIG_URL =
+  import.meta.env.VITE_REMOTE_CONFIG_URL ||
+  "https://montech-remote-config.s3.amazonaws.com/superapp/config.json";
+
+async function fetchRemoteConfig() {
+  const res = await fetch(`${REMOTE_CONFIG_URL}?v=${Date.now()}`, {
+    cache: "no-store",
+    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+  });
+  if (!res.ok) throw new Error(`remote config failed (${res.status})`);
+  return res.json();
+}
+
 export default function AccountEntitlements() {
   const nav = useNavigate();
-  const [buyerUser] = useState(readBuyerUser);
   const authed = useMemo(isAuthedNow, []);
 
   const [items, setItems] = useState([]);
@@ -83,12 +126,18 @@ export default function AccountEntitlements() {
   // 🔎 music search
   const [musicQuery, setMusicQuery] = useState("");
 
-  const userId =
-    safeTrim(localStorage.getItem("buyerUserId")) || safeTrim(buyerUser?.id);
   const token = safeTrim(localStorage.getItem("buyerToken"));
+  const userId = useMemo(() => readUserIdFromBuyerToken(), [token]);
 
   useEffect(() => {
     if (!authed) {
+      nav("/auth/login?next=/account/entitlements");
+      return;
+    }
+
+    // If token is missing/invalid but authed flag exists, kill the “ghost session”
+    if (!token || !userId) {
+      clearBuyerAuthStorage();
       nav("/auth/login?next=/account/entitlements");
       return;
     }
@@ -99,32 +148,43 @@ export default function AccountEntitlements() {
       setItems([]);
 
       try {
-        if (!userId) throw new Error("Missing buyer user id (buyerUserId / buyerUser.id).");
-
         const cfg = await fetchRemoteConfig();
         const realms = normalizeProfiles(cfg);
 
         const out = [];
 
         for (const r of realms) {
+          const headersBase = {
+            "x-profile-key": r.key,
+            // BACKCOMPAT ONLY — sourced from token, never from localStorage
+            "x-user-id": userId,
+            Authorization: token ? `Bearer ${token}` : "",
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          };
+
           // ---------- Paid videos (owned/free) ----------
           try {
             const pvRes = await fetch(`${r.apiBaseUrl}/api/paid-videos`, {
-              headers: {
-                "x-profile-key": r.key,
-                "x-user-id": userId,
-                Authorization: token ? `Bearer ${token}` : "",
-                "Cache-Control": "no-cache",
-                Pragma: "no-cache",
-              },
+              headers: headersBase,
             });
 
             const pv = await pvRes.json().catch(() => null);
             if (!pvRes.ok) {
-              console.log("[entitlements] paid-videos list failed", r.key, pv?.error || pvRes.status);
+              console.log(
+                "[entitlements] paid-videos list failed",
+                r.key,
+                pv?.error || pvRes.status
+              );
             } else {
               for (const v of pv || []) {
-                if (String(v?.access || "").toLowerCase() === "paid" && !v?.owned) continue;
+                // Only show:
+                // - free content
+                // - paid content that is owned (per-user)
+                const access = String(v?.access || "").toLowerCase();
+                const owned = !!v?.owned;
+
+                if (access === "paid" && !owned) continue;
 
                 out.push({
                   kind: "paid_video",
@@ -134,10 +194,7 @@ export default function AccountEntitlements() {
                   id: v?._id,
                   title: safeTrim(v?.title) || "Paid Video",
                   coverUrl: v?.thumbnailUrl || null,
-                  meta: {
-                    access: v?.access || "free",
-                    owned: !!v?.owned,
-                  },
+                  meta: { access: v?.access || "free", owned },
                 });
               }
             }
@@ -148,13 +205,7 @@ export default function AccountEntitlements() {
           // ---------- Music (catalog -> unlocked tracks) ----------
           try {
             const mRes = await fetch(`${r.apiBaseUrl}/api/music/catalog`, {
-              headers: {
-                "x-profile-key": r.key,
-                "x-user-id": userId,
-                Authorization: token ? `Bearer ${token}` : "",
-                "Cache-Control": "no-cache",
-                Pragma: "no-cache",
-              },
+              headers: headersBase,
             });
 
             const m = await mRes.json().catch(() => null);
@@ -163,6 +214,7 @@ export default function AccountEntitlements() {
             } else {
               const tracks = Array.isArray(m?.tracks) ? m.tracks : [];
               for (const t of tracks) {
+                // Only show unlocked
                 if (!t?.isUnlocked) continue;
 
                 out.push({
@@ -173,7 +225,6 @@ export default function AccountEntitlements() {
                   id: t?._id,
                   title: safeTrim(t?.title) || "Track",
                   subtitle: safeTrim(t?.albumTitle) || "Single",
-                  // future-proof: if you later add artist on backend, we’ll match it
                   artist: safeTrim(t?.artist) || safeTrim(t?.artistName) || "",
                   coverUrl: t?.coverImageUrl || null,
                   durationSeconds: t?.durationSeconds ?? null,
@@ -198,27 +249,15 @@ export default function AccountEntitlements() {
   }, [authed, nav, token, userId]);
 
   // ---------- Grouping ----------
-  const videos = useMemo(
-    () => (items || []).filter((x) => x.kind === "paid_video"),
-    [items]
-  );
-  const musicAll = useMemo(
-    () => (items || []).filter((x) => x.kind === "music_track"),
-    [items]
-  );
+  const videos = useMemo(() => (items || []).filter((x) => x.kind === "paid_video"), [items]);
+  const musicAll = useMemo(() => (items || []).filter((x) => x.kind === "music_track"), [items]);
 
   const musicFiltered = useMemo(() => {
     const q = normSearch(musicQuery);
     if (!q) return musicAll;
 
     return musicAll.filter((t) => {
-      const hay = [
-        t.title,
-        t.subtitle,
-        t.artist,
-        t.realmLabel,
-        t.realmKey,
-      ]
+      const hay = [t.title, t.subtitle, t.artist, t.realmLabel, t.realmKey]
         .map((x) => safeTrim(x).toLowerCase())
         .join(" ");
       return hay.includes(q);
@@ -233,7 +272,7 @@ export default function AccountEntitlements() {
       const res = await fetch(url, {
         headers: {
           "x-profile-key": it.realmKey,
-          "x-user-id": userId,
+          "x-user-id": userId, // backcompat
           Authorization: token ? `Bearer ${token}` : "",
           "Cache-Control": "no-cache",
           Pragma: "no-cache",
@@ -272,7 +311,7 @@ export default function AccountEntitlements() {
       let res = await fetch(fullUrl, {
         headers: {
           "x-profile-key": it.realmKey,
-          "x-user-id": userId,
+          "x-user-id": userId, // backcompat
           Authorization: token ? `Bearer ${token}` : "",
           "Cache-Control": "no-cache",
           Pragma: "no-cache",
@@ -353,7 +392,9 @@ export default function AccountEntitlements() {
         <div className="section">
           <div className="sectionHead">
             <div className="sectionTitle">
-              <span className="sectionIcon" aria-hidden>▶︎</span>
+              <span className="sectionIcon" aria-hidden>
+                ▶︎
+              </span>
               Videos
             </div>
             <div className="sectionCount">{videos.length}</div>
@@ -375,11 +416,7 @@ export default function AccountEntitlements() {
                 >
                   <div className="rowInner">
                     <div className="thumb">
-                      {it.coverUrl ? (
-                        <img src={it.coverUrl} alt="" />
-                      ) : (
-                        <div className="thumbFallback" />
-                      )}
+                      {it.coverUrl ? <img src={it.coverUrl} alt="" /> : <div className="thumbFallback" />}
                       <div className="thumbGlow" />
                     </div>
 
@@ -389,7 +426,9 @@ export default function AccountEntitlements() {
                     </div>
 
                     <div className="chip">
-                      <span className="chipIcon" aria-hidden>▶︎</span>
+                      <span className="chipIcon" aria-hidden>
+                        ▶︎
+                      </span>
                     </div>
                   </div>
                 </button>
@@ -402,14 +441,18 @@ export default function AccountEntitlements() {
         <div className="section">
           <div className="sectionHead">
             <div className="sectionTitle">
-              <span className="sectionIcon" aria-hidden>♪</span>
+              <span className="sectionIcon" aria-hidden>
+                ♪
+              </span>
               Music
             </div>
             <div className="sectionCount">{musicFiltered.length}</div>
           </div>
 
           <div className="searchWrap">
-            <span className="searchIcon" aria-hidden>⌕</span>
+            <span className="searchIcon" aria-hidden>
+              ⌕
+            </span>
             <input
               className="searchInput"
               value={musicQuery}
@@ -429,9 +472,7 @@ export default function AccountEntitlements() {
             <div className="emptyGlass">
               <div className="emptyTitle">{musicAll.length ? "No matches" : "No music yet"}</div>
               <div className="emptySub">
-                {musicAll.length
-                  ? "Try a different search."
-                  : "When you unlock music, it’ll appear here."}
+                {musicAll.length ? "Try a different search." : "When you unlock music, it’ll appear here."}
               </div>
             </div>
           ) : (
@@ -445,11 +486,7 @@ export default function AccountEntitlements() {
                 >
                   <div className="rowInner">
                     <div className="thumb">
-                      {it.coverUrl ? (
-                        <img src={it.coverUrl} alt="" />
-                      ) : (
-                        <div className="thumbFallback" />
-                      )}
+                      {it.coverUrl ? <img src={it.coverUrl} alt="" /> : <div className="thumbFallback" />}
                       <div className="thumbGlow" />
                     </div>
 
@@ -462,7 +499,9 @@ export default function AccountEntitlements() {
                     </div>
 
                     <div className="chip chipMusic">
-                      <span className="chipIcon" aria-hidden>♪</span>
+                      <span className="chipIcon" aria-hidden>
+                        ♪
+                      </span>
                     </div>
                   </div>
                 </button>
@@ -494,9 +533,7 @@ export default function AccountEntitlements() {
             <div className="modalTop">
               <div className="modalTitle">
                 {audioPlayer.title}
-                {audioPlayer.mode ? (
-                  <span className="modeTag">({audioPlayer.mode})</span>
-                ) : null}
+                {audioPlayer.mode ? <span className="modeTag">({audioPlayer.mode})</span> : null}
               </div>
               <button className="xBtn" onClick={() => setAudioPlayer(null)}>
                 ✕
@@ -505,18 +542,12 @@ export default function AccountEntitlements() {
 
             <div className="audioHead">
               <div className="audioCover">
-                {audioPlayer.coverUrl ? (
-                  <img src={audioPlayer.coverUrl} alt="" />
-                ) : (
-                  <div className="thumbFallback" />
-                )}
+                {audioPlayer.coverUrl ? <img src={audioPlayer.coverUrl} alt="" /> : <div className="thumbFallback" />}
                 <div className="thumbGlow" />
               </div>
               <div className="audioMeta">
                 <div className="audioTitle">{audioPlayer.title}</div>
-                {audioPlayer.subtitle ? (
-                  <div className="audioSub">{audioPlayer.subtitle}</div>
-                ) : null}
+                {audioPlayer.subtitle ? <div className="audioSub">{audioPlayer.subtitle}</div> : null}
               </div>
             </div>
 
@@ -534,8 +565,6 @@ export default function AccountEntitlements() {
           font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
           background:#03040a;
         }
-
-        /* IndiVerse cosmic */
         .ivBg{
           position:fixed;
           inset:0;
@@ -546,8 +575,6 @@ export default function AccountEntitlements() {
             linear-gradient(180deg, #0b1020, #090b14, #06070d);
           z-index:0;
         }
-
-        /* star speckle */
         .ivStars{
           position:fixed;
           inset:0;
@@ -561,7 +588,6 @@ export default function AccountEntitlements() {
           z-index:0;
           pointer-events:none;
         }
-
         .ivWrap{
           position:relative;
           z-index:1;
@@ -569,7 +595,6 @@ export default function AccountEntitlements() {
           margin: 0 auto;
           padding: 18px 16px 60px;
         }
-
         .topRow{
           display:flex;
           justify-content:space-between;
@@ -577,7 +602,6 @@ export default function AccountEntitlements() {
           gap:10px;
           margin-bottom:14px;
         }
-
         .pillBtn{
           border:1px solid rgba(255,255,255,.14);
           background:rgba(0,0,0,.24);
@@ -716,13 +740,8 @@ export default function AccountEntitlements() {
           -webkit-backdrop-filter: blur(14px);
           transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
         }
-        .row:hover{
-          border-color: rgba(0,255,255,0.16);
-        }
-        .row:active{
-          transform: scale(0.995);
-          opacity: 0.96;
-        }
+        .row:hover{ border-color: rgba(0,255,255,0.16); }
+        .row:active{ transform: scale(0.995); opacity: 0.96; }
 
         .rowInner{
           display:flex;
@@ -740,17 +759,8 @@ export default function AccountEntitlements() {
           position: relative;
           flex: 0 0 auto;
         }
-        .thumb img{
-          width:100%;
-          height:100%;
-          object-fit: cover;
-          display:block;
-        }
-        .thumbFallback{
-          width:100%;
-          height:100%;
-          background: rgba(255,255,255,0.06);
-        }
+        .thumb img{ width:100%; height:100%; object-fit: cover; display:block; }
+        .thumbFallback{ width:100%; height:100%; background: rgba(255,255,255,0.06); }
         .thumbGlow{
           position:absolute;
           inset:-40%;
@@ -759,15 +769,8 @@ export default function AccountEntitlements() {
           opacity: 0.7;
         }
 
-        .txt{
-          flex:1;
-          min-width:0;
-        }
-        .title{
-          font-weight: 900;
-          letter-spacing: 0.15px;
-          line-height: 1.15;
-        }
+        .txt{ flex:1; min-width:0; }
+        .title{ font-weight: 900; letter-spacing: 0.15px; line-height: 1.15; }
         .meta{
           margin-top: 6px;
           opacity: 0.72;
@@ -789,13 +792,8 @@ export default function AccountEntitlements() {
           background: rgba(255,255,255,0.06);
           box-shadow: 0 18px 22px rgba(0,0,0,0.28);
         }
-        .chipMusic{
-          border-color: rgba(0,255,255,0.14);
-        }
-        .chipIcon{
-          opacity: 0.9;
-          font-weight: 900;
-        }
+        .chipMusic{ border-color: rgba(0,255,255,0.14); }
+        .chipIcon{ opacity: 0.9; font-weight: 900; }
 
         .emptyGlass{
           padding: 16px;
@@ -806,7 +804,6 @@ export default function AccountEntitlements() {
         .emptyTitle{ font-weight: 900; }
         .emptySub{ margin-top: 6px; opacity: 0.72; font-size: 13px; }
 
-        /* Modals */
         .modal{
           position:fixed;
           inset:0;
@@ -833,17 +830,8 @@ export default function AccountEntitlements() {
           gap:10px;
           margin-bottom: 10px;
         }
-        .modalTitle{
-          font-weight: 900;
-          font-size: 14px;
-          opacity: 0.96;
-        }
-        .modeTag{
-          opacity: 0.7;
-          font-weight: 800;
-          margin-left: 10px;
-          font-size: 12px;
-        }
+        .modalTitle{ font-weight: 900; font-size: 14px; opacity: 0.96; }
+        .modeTag{ opacity: 0.7; font-weight: 800; margin-left: 10px; font-size: 12px; }
         .xBtn{
           border:none;
           background: rgba(255,255,255,0.08);
