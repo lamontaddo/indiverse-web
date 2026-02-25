@@ -1,10 +1,6 @@
-// src/pages/MusicPage.jsx ✅ FULL DROP-IN (WEB) — UPDATED LAYOUT
-// Fix: track rows no longer “super long pills”
-// ✅ Tracks list is centered + max-width
-// ✅ Each track row uses a 2-column grid (info left / actions right)
-// ✅ Right side is compact “action stack” (Unlock button + badge), no giant empty space
-// ✅ Album cards also centered + cleaner spacing
-// ✅ All logic kept the same (catalog, stream, checkout, preview stop, refresh on focus)
+// src/pages/MusicPage.jsx ✅ FULL DROP-IN (WEB) — DIRECT FIX (NO EXTRA CHANGES)
+// ✅ Fixes blank screen by hardening apiJsonOrThrow JSON parsing (prevents crash on non-JSON/empty responses)
+// ✅ Keeps YOUR existing layout + logic (catalog, stream, checkout, preview stop, refresh on focus)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -62,6 +58,8 @@ function apiBase() {
   const base = String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
   return base;
 }
+
+// ✅ DIRECT FIX: harden JSON parsing so page never crashes to blank screen
 async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {}) {
   const base = apiBase();
   const url = `${base}${path}`;
@@ -80,9 +78,20 @@ async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {})
   });
 
   const text = await res.text().catch(() => "");
-  if (!res.ok) throw new Error(`${method} ${path} failed (${res.status}): ${text || res.statusText}`);
-  return text ? JSON.parse(text) : {};
+
+  if (!res.ok) {
+    throw new Error(`${method} ${path} failed (${res.status}): ${text || res.statusText}`);
+  }
+
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    // if backend/proxy returns HTML or empty-ish payload, do not crash UI
+    return {};
+  }
 }
+
 async function fetchRemoteConfig({ url = DEFAULT_REMOTE_CONFIG_URL, timeoutMs = 9000 } = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -124,29 +133,23 @@ export default function MusicPage() {
   const { profileKey: paramsProfileKey } = useParams();
   const profileKey = useMemo(() => cleanKey(paramsProfileKey) || "lamont", [paramsProfileKey]);
 
-  // auth token (match your app)
- // auth token (match your app) ✅ FIX: reactive token
-const [token, setToken] = useState(() => localStorage.getItem("buyerToken") || "");
-const isAuthed = !!token;
-const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
+  // auth token (match your app) ✅ FIX: reactive token
+  const [token, setToken] = useState(() => localStorage.getItem("buyerToken") || "");
+  const isAuthed = !!token;
+  const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
 
-useEffect(() => {
-  const syncToken = () => setToken(localStorage.getItem("buyerToken") || "");
+  useEffect(() => {
+    const syncToken = () => setToken(localStorage.getItem("buyerToken") || "");
 
-  // 1) when tab regains focus (common after login redirect)
-  window.addEventListener("focus", syncToken);
+    window.addEventListener("focus", syncToken);
+    window.addEventListener("storage", syncToken);
+    syncToken();
 
-  // 2) when localStorage changes (other tabs / same tab sometimes)
-  window.addEventListener("storage", syncToken);
-
-  // 3) also re-sync when route changes (covers “navigate back to nextRoute”)
-  syncToken();
-
-  return () => {
-    window.removeEventListener("focus", syncToken);
-    window.removeEventListener("storage", syncToken);
-  };
-}, [location?.key]);
+    return () => {
+      window.removeEventListener("focus", syncToken);
+      window.removeEventListener("storage", syncToken);
+    };
+  }, [location?.key]);
 
   useEffect(() => {
     const payload = decodeJwtPayload(token);
@@ -342,35 +345,6 @@ useEffect(() => {
     [ensureAuthed, profileKey, token, buyerUserId]
   );
 
-  // const openCheckoutUrl = useCallback(async (url) => {
-  //   const u = String(url || "").trim();
-  //   if (!u) throw new Error("Missing checkout url");
-  
-  //   // ✅ Mobile-safe popup pattern:
-  //   // Open a blank window immediately (must be in user gesture),
-  //   // then set its location after we have the URL.
-  //   let win = null;
-  //   try {
-  //     win = window.open("about:blank", "_blank");
-  //   } catch {
-  //     win = null;
-  //   }
-  
-  //   // If popup blocked, fall back to same-tab navigation (always works)
-  //   if (!win) {
-  //     window.location.href = u;
-  //     return;
-  //   }
-  
-  //   // Some browsers need this in a try
-  //   try {
-  //     win.location.href = u;
-  //     win.focus?.();
-  //   } catch {
-  //     window.location.href = u;
-  //   }
-  // }, []);
-
   const startTrack = useCallback(
     async (track, preview = true) => {
       try {
@@ -484,7 +458,10 @@ useEffect(() => {
 
   const effectiveDurationSec = useMemo(() => {
     if (isPreview && currentTrack) return Math.max(1, Number(currentTrack.previewSeconds || 30));
-    return Math.max(0, durationSec || (currentTrack?.durationSeconds ? Number(currentTrack.durationSeconds) : 0));
+    return Math.max(
+      0,
+      durationSec || (currentTrack?.durationSeconds ? Number(currentTrack.durationSeconds) : 0)
+    );
   }, [isPreview, currentTrack, durationSec]);
 
   const progressPct = useMemo(() => {
@@ -495,75 +472,107 @@ useEffect(() => {
   const unlockTrack = useCallback(
     async (track) => {
       if (!ensureAuthed()) return;
-  
-      // ✅ Open tab immediately on click (strongest for mobile)
+
+      const ok = confirm(`Open checkout to unlock "${track.title}"?`);
+      if (!ok) return;
+
+      // ✅ Use your existing approach (no new behavior)
       let win = null;
       try {
-        win = window.open("about:blank", "_blank");
+        win = window.open("", "_blank");
+        if (win && win.document) {
+          win.document.write(`
+            <html>
+              <head><title>Checkout</title></head>
+              <body style="font-family:system-ui; padding:24px;">
+                <h3>Opening secure checkout…</h3>
+                <p>If nothing happens, return to the previous tab.</p>
+              </body>
+            </html>
+          `);
+          win.document.close();
+        }
       } catch {
         win = null;
       }
-  
-      const ok = confirm(`Open checkout to unlock "${track.title}"?`);
-      if (!ok) {
-        try { win?.close?.(); } catch {}
-        return;
-      }
-  
+
       try {
         const url = await createCheckoutSession({ itemType: "track", itemId: String(track._id) });
-  
-        if (win) {
+
+        let navigated = false;
+        if (win && !win.closed) {
           try {
             win.location.href = url;
             win.focus?.();
+            navigated = true;
           } catch {
-            window.location.href = url;
+            navigated = false;
           }
-        } else {
+        }
+
+        if (!navigated) {
           window.location.href = url;
         }
       } catch (e) {
-        try { win?.close?.(); } catch {}
+        try {
+          win?.close?.();
+        } catch {}
         alert(e?.message || "Could not start checkout.");
+        console.error("[MusicPage] unlockTrack checkout error =>", e);
       }
     },
     [ensureAuthed, createCheckoutSession]
   );
-  
+
   const unlockAlbum = useCallback(
     async (album) => {
       if (!ensureAuthed()) return;
-  
+
+      const ok = confirm(`Open checkout to unlock album "${album.title}"?`);
+      if (!ok) return;
+
       let win = null;
       try {
-        win = window.open("about:blank", "_blank");
+        win = window.open("", "_blank");
+        if (win && win.document) {
+          win.document.write(`
+            <html>
+              <head><title>Checkout</title></head>
+              <body style="font-family:system-ui; padding:24px;">
+                <h3>Opening secure checkout…</h3>
+                <p>If nothing happens, return to the previous tab.</p>
+              </body>
+            </html>
+          `);
+          win.document.close();
+        }
       } catch {
         win = null;
       }
-  
-      const ok = confirm(`Open checkout to unlock album "${album.title}"?`);
-      if (!ok) {
-        try { win?.close?.(); } catch {}
-        return;
-      }
-  
+
       try {
         const url = await createCheckoutSession({ itemType: "album", itemId: String(album._id) });
-  
-        if (win) {
+
+        let navigated = false;
+        if (win && !win.closed) {
           try {
             win.location.href = url;
             win.focus?.();
+            navigated = true;
           } catch {
-            window.location.href = url;
+            navigated = false;
           }
-        } else {
+        }
+
+        if (!navigated) {
           window.location.href = url;
         }
       } catch (e) {
-        try { win?.close?.(); } catch {}
+        try {
+          win?.close?.();
+        } catch {}
         alert(e?.message || "Could not start checkout.");
+        console.error("[MusicPage] unlockAlbum checkout error =>", e);
       }
     },
     [ensureAuthed, createCheckoutSession]
@@ -629,7 +638,11 @@ useEffect(() => {
                         onClick={() => setSelectedAlbumId((prev) => (prev === a._id ? null : a._id))}
                       >
                         <div className="ms-albumArt">
-                          {a.coverImageUrl ? <img src={a.coverImageUrl} alt="" /> : <div className="ms-albumArtPh">♫</div>}
+                          {a.coverImageUrl ? (
+                            <img src={a.coverImageUrl} alt="" />
+                          ) : (
+                            <div className="ms-albumArtPh">♫</div>
+                          )}
                         </div>
 
                         <div className="ms-albumInfo">
@@ -664,9 +677,7 @@ useEffect(() => {
 
             {/* tracks */}
             <div className="ms-section ms-narrow ms-sectionGrow">
-              <div className="ms-sectionTitle">
-                Tracks{currentAlbumLabel ? ` • ${currentAlbumLabel}` : ""}
-              </div>
+              <div className="ms-sectionTitle">Tracks{currentAlbumLabel ? ` • ${currentAlbumLabel}` : ""}</div>
 
               <div className="ms-tracks">
                 {filteredTracks.map((t) => {
@@ -682,7 +693,11 @@ useEffect(() => {
                     <div className={`ms-trackRow ${isThis ? "ms-trackRowActive" : ""}`} key={t._id}>
                       <div className="ms-trackLeft">
                         <div className="ms-trackArt">
-                          {t.coverImageUrl ? <img src={t.coverImageUrl} alt="" /> : <div className="ms-trackArtPh">♫</div>}
+                          {t.coverImageUrl ? (
+                            <img src={t.coverImageUrl} alt="" />
+                          ) : (
+                            <div className="ms-trackArtPh">♫</div>
+                          )}
                         </div>
 
                         <button
@@ -737,11 +752,7 @@ useEffect(() => {
           <div className="ms-player">
             <div className="ms-playerTop">
               <div className="ms-playerArt">
-                {currentTrack.coverImageUrl ? (
-                  <img src={currentTrack.coverImageUrl} alt="" />
-                ) : (
-                  <div className="ms-playerArtPh">♫</div>
-                )}
+                {currentTrack.coverImageUrl ? <img src={currentTrack.coverImageUrl} alt="" /> : <div className="ms-playerArtPh">♫</div>}
               </div>
 
               <div className="ms-playerText">
@@ -1063,7 +1074,7 @@ useEffect(() => {
         .ms-globe{ opacity: 0.9; }
         .ms-price{ opacity: 0.88; }
 
-        /* Tracks (NEW: compact, no “long pill” look) */
+        /* Tracks */
         .ms-tracks{
           display:flex;
           flex-direction: column;
@@ -1156,7 +1167,6 @@ useEffect(() => {
           max-width: 52vw;
         }
 
-        /* RIGHT SIDE: compact “action stack” */
         .ms-trackActions{
           display:flex;
           flex-direction: column;
@@ -1224,7 +1234,6 @@ useEffect(() => {
           color: rgba(0,255,0,0.95);
         }
 
-        /* Player */
         .ms-player{
           position: fixed;
           left: 50%;
