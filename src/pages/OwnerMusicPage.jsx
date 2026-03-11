@@ -497,17 +497,23 @@ export default function OwnerMusicPage() {
   
     setUploadingFull(true);
     try {
-      const fallbackName =
-        file.type === "video/mp4" ? "track.mp4" : "track.m4a";
+      const lowerName = String(file.name || "").toLowerCase();
   
-      const fallbackType =
-        file.type || (file.name?.toLowerCase().endsWith(".mp4") ? "video/mp4" : "audio/m4a");
+      let fallbackType = file.type || "audio/mpeg";
+      if (!file.type) {
+        if (lowerName.endsWith(".m4a")) fallbackType = "audio/mp4";
+        else if (lowerName.endsWith(".wav")) fallbackType = "audio/wav";
+        else if (lowerName.endsWith(".aac")) fallbackType = "audio/aac";
+        else if (lowerName.endsWith(".flac")) fallbackType = "audio/flac";
+        else if (lowerName.endsWith(".ogg")) fallbackType = "audio/ogg";
+        else fallbackType = "audio/mpeg";
+      }
   
       const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
         body: JSON.stringify({
-          filename: file.name || fallbackName,
+          filename: file.name || "track.mp3",
           contentType: fallbackType,
         }),
       });
@@ -757,12 +763,12 @@ export default function OwnerMusicPage() {
             <label className={`ouploadBtn ${uploadingTrackArtwork ? "disabled" : ""}`}>
               {uploadingTrackArtwork ? "Uploading…" : "Upload Artwork"}
               <input
-  type="file"
-  accept=".mp3,.m4a,.wav,.aac,.flac,.mp4,audio/*,video/mp4"
-  style={{ display: "none" }}
-  disabled={uploadingFull}
-  onChange={(e) => pickAndUploadFullAudio(e.target.files?.[0])}
-/>
+                type="file"
+                accept=".mp3,.m4a,.wav,.aac,.flac,.ogg,.mpeg,audio/*"
+                style={{ display: "none" }}
+                disabled={uploadingFull}
+                onChange={(e) => pickAndUploadFullAudio(e.target.files?.[0])}
+               />
             </label>
           </div>
 
