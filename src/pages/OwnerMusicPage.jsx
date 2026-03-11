@@ -494,29 +494,41 @@ export default function OwnerMusicPage() {
   const pickAndUploadFullAudio = async (file) => {
     if (!file) return;
     if (!profileKey) return;
-
+  
     setUploadingFull(true);
     try {
+      const fallbackName =
+        file.type === "video/mp4" ? "track.mp4" : "track.m4a";
+  
+      const fallbackType =
+        file.type || (file.name?.toLowerCase().endsWith(".mp4") ? "video/mp4" : "audio/m4a");
+  
       const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
         body: JSON.stringify({
-          filename: file.name || "track.m4a",
-          contentType: file.type || "audio/m4a",
+          filename: file.name || fallbackName,
+          contentType: fallbackType,
         }),
       });
-
+  
       if (!uploadData?.uploadUrl || !uploadData?.key) {
         throw new Error("Upload URL response missing uploadUrl/key");
       }
-
-      await s3PutUpload({ uploadUrl: uploadData.uploadUrl, file, contentType: file.type });
-
+  
+      await s3PutUpload({
+        uploadUrl: uploadData.uploadUrl,
+        file,
+        contentType: fallbackType,
+      });
+  
       setFormS3KeyFull(uploadData.key);
       setFormS3KeyPreview((prev) => prev || uploadData.key);
       alert("Upload complete. Full key set (and preview key set if empty).");
     } catch (e) {
-      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") return goOwnerLogin(profileKey);
+      if (e?.status === 401 || e?.status === 403 || e?.code === "OWNER_UNAUTHORIZED") {
+        return goOwnerLogin(profileKey);
+      }
       console.error("full upload error:", e);
       alert(e?.message || "Could not upload audio.");
     } finally {
@@ -745,12 +757,12 @@ export default function OwnerMusicPage() {
             <label className={`ouploadBtn ${uploadingTrackArtwork ? "disabled" : ""}`}>
               {uploadingTrackArtwork ? "Uploading…" : "Upload Artwork"}
               <input
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                disabled={uploadingTrackArtwork}
-                onChange={(e) => pickAndUploadTrackArtwork(e.target.files?.[0])}
-              />
+  type="file"
+  accept=".mp3,.m4a,.wav,.aac,.flac,.mp4,audio/*,video/mp4"
+  style={{ display: "none" }}
+  disabled={uploadingFull}
+  onChange={(e) => pickAndUploadFullAudio(e.target.files?.[0])}
+/>
             </label>
           </div>
 
