@@ -8,11 +8,14 @@
 // ✅ parse json safely
 // ✅ S3 PUT upload via fetch(uploadUrl, { method:'PUT', body:file })
 //
-// ✅ NEW (step 1 of free entitlements work):
+// ✅ NEW:
 // - Owner can mark Track/Album as "Free" (saves priceCents=0)
 // - Price input disables when Free is enabled
 // - If NOT free, price must be > 0
 // - List prices show "FREE" when priceCents === 0
+// - iPhone/mobile-web safe upload handling
+// - Artwork upload validates image files after selection
+// - Audio upload validates audio files after selection
 //
 // Requires:
 // - src/utils/ownerApi.web.js (exports ownerFetchRawWeb, ownerJsonWeb, normalizeProfileKey)
@@ -58,6 +61,39 @@ function toPriceCents(priceStr) {
   const f = parseFloat(raw);
   if (Number.isNaN(f) || f < 0) return null;
   return Math.round(f * 100);
+}
+
+function isImageFile(file) {
+  if (!file) return false;
+  const name = String(file.name || "").toLowerCase();
+  const type = String(file.type || "").toLowerCase();
+
+  return (
+    type.startsWith("image/") ||
+    name.endsWith(".png") ||
+    name.endsWith(".jpg") ||
+    name.endsWith(".jpeg") ||
+    name.endsWith(".webp") ||
+    name.endsWith(".gif") ||
+    name.endsWith(".heic")
+  );
+}
+
+function isAudioFile(file) {
+  if (!file) return false;
+  const name = String(file.name || "").toLowerCase();
+  const type = String(file.type || "").toLowerCase();
+
+  return (
+    type.startsWith("audio/") ||
+    name.endsWith(".mp3") ||
+    name.endsWith(".m4a") ||
+    name.endsWith(".wav") ||
+    name.endsWith(".aac") ||
+    name.endsWith(".flac") ||
+    name.endsWith(".ogg") ||
+    name.endsWith(".mpeg")
+  );
 }
 
 async function safeJson(res) {
@@ -317,12 +353,23 @@ export default function OwnerMusicPage() {
 
     setUploadingAlbumArtwork(true);
     try {
+      const lowerName = String(file.name || "").toLowerCase();
+
+      let fallbackType = file.type || "image/jpeg";
+      if (!file.type) {
+        if (lowerName.endsWith(".png")) fallbackType = "image/png";
+        else if (lowerName.endsWith(".webp")) fallbackType = "image/webp";
+        else if (lowerName.endsWith(".gif")) fallbackType = "image/gif";
+        else if (lowerName.endsWith(".heic")) fallbackType = "image/heic";
+        else fallbackType = "image/jpeg";
+      }
+
       const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
         body: JSON.stringify({
           filename: file.name || "album-cover.jpg",
-          contentType: file.type || "image/jpeg",
+          contentType: fallbackType,
         }),
       });
 
@@ -330,7 +377,11 @@ export default function OwnerMusicPage() {
         throw new Error("Upload URL response missing uploadUrl/key");
       }
 
-      await s3PutUpload({ uploadUrl: uploadData.uploadUrl, file, contentType: file.type });
+      await s3PutUpload({
+        uploadUrl: uploadData.uploadUrl,
+        file,
+        contentType: fallbackType,
+      });
 
       setAlbumCoverImageKey(uploadData.key);
       setAlbumCoverImageUrl(uploadData.publicUrl || URL.createObjectURL(file));
@@ -464,12 +515,23 @@ export default function OwnerMusicPage() {
 
     setUploadingTrackArtwork(true);
     try {
+      const lowerName = String(file.name || "").toLowerCase();
+
+      let fallbackType = file.type || "image/jpeg";
+      if (!file.type) {
+        if (lowerName.endsWith(".png")) fallbackType = "image/png";
+        else if (lowerName.endsWith(".webp")) fallbackType = "image/webp";
+        else if (lowerName.endsWith(".gif")) fallbackType = "image/gif";
+        else if (lowerName.endsWith(".heic")) fallbackType = "image/heic";
+        else fallbackType = "image/jpeg";
+      }
+
       const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
         body: JSON.stringify({
           filename: file.name || "cover.jpg",
-          contentType: file.type || "image/jpeg",
+          contentType: fallbackType,
         }),
       });
 
@@ -477,7 +539,11 @@ export default function OwnerMusicPage() {
         throw new Error("Upload URL response missing uploadUrl/key");
       }
 
-      await s3PutUpload({ uploadUrl: uploadData.uploadUrl, file, contentType: file.type });
+      await s3PutUpload({
+        uploadUrl: uploadData.uploadUrl,
+        file,
+        contentType: fallbackType,
+      });
 
       setFormCoverImageKey(uploadData.key);
       setFormCoverImageUrl(uploadData.publicUrl || URL.createObjectURL(file));
@@ -494,11 +560,11 @@ export default function OwnerMusicPage() {
   const pickAndUploadFullAudio = async (file) => {
     if (!file) return;
     if (!profileKey) return;
-  
+
     setUploadingFull(true);
     try {
       const lowerName = String(file.name || "").toLowerCase();
-  
+
       let fallbackType = file.type || "audio/mpeg";
       if (!file.type) {
         if (lowerName.endsWith(".m4a")) fallbackType = "audio/mp4";
@@ -508,7 +574,7 @@ export default function OwnerMusicPage() {
         else if (lowerName.endsWith(".ogg")) fallbackType = "audio/ogg";
         else fallbackType = "audio/mpeg";
       }
-  
+
       const uploadData = await ownerJsonWeb("/api/owner/music/upload-url", {
         profileKey,
         method: "POST",
@@ -517,17 +583,17 @@ export default function OwnerMusicPage() {
           contentType: fallbackType,
         }),
       });
-  
+
       if (!uploadData?.uploadUrl || !uploadData?.key) {
         throw new Error("Upload URL response missing uploadUrl/key");
       }
-  
+
       await s3PutUpload({
         uploadUrl: uploadData.uploadUrl,
         file,
         contentType: fallbackType,
       });
-  
+
       setFormS3KeyFull(uploadData.key);
       setFormS3KeyPreview((prev) => prev || uploadData.key);
       alert("Upload complete. Full key set (and preview key set if empty).");
@@ -764,11 +830,21 @@ export default function OwnerMusicPage() {
               {uploadingTrackArtwork ? "Uploading…" : "Upload Artwork"}
               <input
                 type="file"
-                accept=".mp3,.m4a,.wav,.aac,.flac,.ogg,.mpeg,audio/*"
                 style={{ display: "none" }}
-                disabled={uploadingFull}
-                onChange={(e) => pickAndUploadFullAudio(e.target.files?.[0])}
-               />
+                disabled={uploadingTrackArtwork}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+
+                  if (!isImageFile(file)) {
+                    alert("Please choose an image file like PNG, JPG, JPEG, WEBP, GIF, or HEIC.");
+                    e.target.value = "";
+                    return;
+                  }
+
+                  pickAndUploadTrackArtwork(file);
+                }}
+              />
             </label>
           </div>
 
@@ -792,10 +868,20 @@ export default function OwnerMusicPage() {
               {uploadingFull ? "Uploading…" : "Upload Audio"}
               <input
                 type="file"
-                accept="audio/*"
                 style={{ display: "none" }}
                 disabled={uploadingFull}
-                onChange={(e) => pickAndUploadFullAudio(e.target.files?.[0])}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+
+                  if (!isAudioFile(file)) {
+                    alert("Please choose an audio file like MP3, M4A, WAV, AAC, FLAC, or OGG.");
+                    e.target.value = "";
+                    return;
+                  }
+
+                  pickAndUploadFullAudio(file);
+                }}
               />
             </label>
           </div>
@@ -867,10 +953,20 @@ export default function OwnerMusicPage() {
               {uploadingAlbumArtwork ? "Uploading…" : "Upload Artwork"}
               <input
                 type="file"
-                accept="image/*"
                 style={{ display: "none" }}
                 disabled={uploadingAlbumArtwork}
-                onChange={(e) => pickAndUploadAlbumArtwork(e.target.files?.[0])}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+
+                  if (!isImageFile(file)) {
+                    alert("Please choose an image file like PNG, JPG, JPEG, WEBP, GIF, or HEIC.");
+                    e.target.value = "";
+                    return;
+                  }
+
+                  pickAndUploadAlbumArtwork(file);
+                }}
               />
             </label>
           </div>
