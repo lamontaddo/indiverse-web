@@ -1,18 +1,20 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — ENHANCED + BACK TO INDIVERSE + PRODUCTS FIX + PORTFOLIO FIX + CONSULTATION/ FLOWER ORDERS ALIAS
+// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — adds Stripe payouts tile + status + onboarding
 // Route: /world/:profileKey/owner/home
 //
-// ✅ FIX: Products tile routes to /world/:profileKey/owner/products
-// ✅ FIX: Portfolio tile now routes to /world/:profileKey/owner/portfolio
-// ✅ FIX: Supports remote-config tiles using `ownerconsultation` by aliasing to /owner/flowerorders
-// ✅ Adds routeMap.ownerproducts + routeMap.ownerorders + routeMap.ownerportfolio
-// ✅ Adds routeMap.ownerconsultation + routeMap.ownerflowerorders -> "flowerorders"
-// ✅ builtOwnerRoutes includes "products" + "orders" + "portfolio" + "flowerorders"
-// ✅ Adds fallback Products tile + Portfolio tile + Flower Orders tile
-// ✅ Keeps large icon look + Back to IndiVerse button + enhanced UI
+// ✅ Adds Stripe payouts tile
+// ✅ Calls GET /api/owner/stripe/status
+// ✅ Calls POST /api/owner/stripe/onboard
+// ✅ Opens Stripe onboarding URL in browser
+// ✅ Shows tile state:
+//    - Set Up Payouts
+//    - Continue Setup
+//    - Ready to Sell
+// ✅ Keeps all existing owner tile behavior
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getProfileByKey } from "../services/profileRegistry";
+import { ownerJsonWeb } from "../utils/ownerApi.web";
 
 const SPEED = 0.55;
 const AMP_BOOST = 1.1;
@@ -23,16 +25,9 @@ const FALLBACK_OWNER_ITEMS = [
   { key: "messages", label: "Messages", ionicon: "chatbubbles", to: "ownermessages", size: 150 },
   { key: "playlist", label: "Playlist", ionicon: "list", to: "ownerplaylist", size: 165 },
   { key: "music", label: "Music", ionicon: "musical-notes", to: "ownermusic", size: 160 },
-
-  // ✅ consultation / flower orders (alias-safe)
   { key: "flowerorders", label: "Flower Orders", ionicon: "rose", to: "ownerconsultation", size: 160 },
-
-  // ✅ products (important)
   { key: "products", label: "Products", ionicon: "cart", to: "ownerproducts", size: 160 },
-
-  // ✅ portfolio
   { key: "portfolio", label: "Portfolio", ionicon: "images", to: "ownerportfolio", size: 155 },
-
   { key: "fashion", label: "Fashion", ionicon: "shirt", to: "ownerfashion", size: 155 },
   { key: "videos", label: "Videos", ionicon: "videocam", to: "ownervideos", size: 155 },
 ];
@@ -57,37 +52,41 @@ function normalizeOwnerItems(profile) {
   }));
 }
 
-// --- Ionicon → Emoji (intentional web stand-in) ---
 function ionToEmoji(name = "", tile = null) {
   const k = String(name).toLowerCase();
   const key = String(tile?.key || "").toLowerCase();
   const to = String(tile?.to || "").toLowerCase();
   const label = String(tile?.label || "").toLowerCase();
 
-  // ✅ FORCE messages icon by tile identity (not ionicon)
   if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
-
-  // ✅ consultation / flower orders
   if (key === "flowerorders" || to.includes("consultation") || to.includes("flowerorders") || label.includes("flower"))
     return "🌹";
+  if (key === "stripepayouts") return "💳";
 
   if (k.includes("person")) return "👤";
   if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
-
   if (k.includes("call") || k.includes("phone")) return "📞";
   if (k.includes("mail") || k.includes("email")) return "✉️";
-
   if (k.includes("chat") || k.includes("message")) return "💬";
-
   if (k.includes("list")) return "📃";
   if (k.includes("music") || k.includes("musical")) return "🎵";
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
-
   if (k.includes("images") || k.includes("image") || k.includes("camera")) return "🖼️";
   if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
+  if (k.includes("card") || k.includes("cash")) return "💳";
   if (k.includes("home")) return "🏠";
   return "◉";
+}
+
+function hexToRgba(hex, a = 1) {
+  const h = String(hex || "").replace("#", "").trim();
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  if (full.length !== 6) return `rgba(129,140,248,${a})`;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 export default function OwnerHomePage() {
@@ -107,7 +106,77 @@ export default function OwnerHomePage() {
   const accent = profile?.accent || "#818cf8";
   const bgUrl = location?.state?.bgUrl || null;
 
-  const TILES = useMemo(() => normalizeOwnerItems(profile), [profile]);
+  const baseTiles = useMemo(() => normalizeOwnerItems(profile), [profile]);
+
+  const [stripeStatus, setStripeStatus] = useState({
+    loading: true,
+    ready: false,
+    hasAccount: false,
+    detailsSubmitted: false,
+    chargesEnabled: false,
+    payoutsEnabled: false,
+    error: "",
+  });
+
+  async function loadStripeStatus() {
+    if (!profileKey) return;
+
+    setStripeStatus((s) => ({ ...s, loading: true, error: "" }));
+
+    try {
+      const data = await ownerJsonWeb("/api/owner/stripe/status", {
+        method: "GET",
+        profileKey,
+      });
+
+      const ready = !!data?.ready;
+      const hasAccount = !!data?.stripeAccountId;
+
+      setStripeStatus({
+        loading: false,
+        ready,
+        hasAccount,
+        detailsSubmitted: !!data?.detailsSubmitted,
+        chargesEnabled: !!data?.chargesEnabled,
+        payoutsEnabled: !!data?.payoutsEnabled,
+        error: "",
+      });
+    } catch (err) {
+      setStripeStatus({
+        loading: false,
+        ready: false,
+        hasAccount: false,
+        detailsSubmitted: false,
+        chargesEnabled: false,
+        payoutsEnabled: false,
+        error: err?.message || "Unable to load Stripe status",
+      });
+    }
+  }
+
+  useEffect(() => {
+    loadStripeStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileKey]);
+
+  const stripeTile = useMemo(() => {
+    let label = "Set Up Payouts";
+    if (stripeStatus.ready) label = "Ready to Sell";
+    else if (stripeStatus.hasAccount) label = "Continue Setup";
+
+    return {
+      key: "stripepayouts",
+      label,
+      ionicon: "card",
+      to: "__stripe_payouts__",
+      size: 160,
+    };
+  }, [stripeStatus]);
+
+  const TILES = useMemo(() => {
+    const withoutStripe = baseTiles.filter((t) => String(t.key || "").toLowerCase() !== "stripepayouts");
+    return [stripeTile, ...withoutStripe];
+  }, [baseTiles, stripeTile]);
 
   const phases = useMemo(
     () =>
@@ -137,7 +206,6 @@ export default function OwnerHomePage() {
     return `translate3d(${Math.sin(t * p.sx) * p.ax}px, ${Math.cos(t * p.sy) * p.ay}px, 0)`;
   };
 
-  // ✅ route aliases (remote config might emit "ownerconsultation")
   const routeMap = {
     ownerabout: "about",
     ownercontacts: "contacts",
@@ -146,18 +214,14 @@ export default function OwnerHomePage() {
     ownermusic: "music",
     ownerfashion: "fashion",
     ownervideos: "videos",
-
     ownerproducts: "products",
     ownerorders: "orders",
     ownerportfolio: "portfolio",
-
-    // ✅ ALIASES -> /owner/flowerorders
     ownerflowerorders: "flowerorders",
     ownerconsultation: "flowerorders",
     ownerpaidvideos: "paid-videos",
   };
 
-  // ✅ allow-list for navigation
   const builtOwnerRoutes = new Set([
     "home",
     "about",
@@ -174,19 +238,40 @@ export default function OwnerHomePage() {
     "paid-videos",
   ]);
 
+  async function handleStripePayouts() {
+    if (!profileKey) return;
 
-  const handleTilePress = (tile) => {
+    try {
+      const data = await ownerJsonWeb("/api/owner/stripe/onboard", {
+        method: "POST",
+        profileKey,
+        body: JSON.stringify({}),
+      });
+
+      const url = String(data?.url || "").trim();
+      if (!url) {
+        window.alert("No Stripe onboarding URL returned.");
+        return;
+      }
+
+      window.location.assign(url);
+    } catch (err) {
+      window.alert(err?.message || "Unable to start Stripe onboarding.");
+    }
+  }
+
+  const handleTilePress = async (tile) => {
     if (!profileKey) return;
 
     const raw = String(tile.to).toLowerCase().trim();
 
-    // routeMap first; otherwise strip "owner" prefix
+    if (raw === "__stripe_payouts__") {
+      await handleStripePayouts();
+      return;
+    }
+
     let tool = routeMap[raw] || raw.replace(/^owner/, "");
-
-    // ✅ extra safety: if remote config uses "consultation" without "owner"
     if (tool === "consultation") tool = "flowerorders";
-
-    console.log("[OwnerHomePage] tile", raw, "-> tool:", tool);
 
     if (builtOwnerRoutes.has(tool)) {
       navigate(`/world/${encodeURIComponent(profileKey)}/owner/${tool}`, {
@@ -201,6 +286,14 @@ export default function OwnerHomePage() {
     if (!profileKey) return navigate("/", { replace: false });
     navigate(`/world/${encodeURIComponent(profileKey)}`, { state: { profileKey, bgUrl } });
   };
+
+  const stripeHint = stripeStatus.loading
+    ? "Checking payouts…"
+    : stripeStatus.ready
+      ? "Stripe ready"
+      : stripeStatus.hasAccount
+        ? "Finish Stripe setup"
+        : "No Stripe account yet";
 
   return (
     <div style={styles.page}>
@@ -231,6 +324,14 @@ export default function OwnerHomePage() {
         </div>
       ) : null}
 
+      {profileKey ? (
+        <div style={styles.stripeBar}>
+          <span style={styles.stripeBarLabel}>Payouts:</span>
+          <span style={styles.stripeBarValue}>{stripeHint}</span>
+          {!!stripeStatus.error ? <span style={styles.stripeBarError}>• {stripeStatus.error}</span> : null}
+        </div>
+      ) : null}
+
       <div style={styles.field}>
         {TILES.map((t, idx) => (
           <button
@@ -238,7 +339,7 @@ export default function OwnerHomePage() {
             className="oh-tile"
             style={{ width: t.size, height: t.size, transform: tileTransform(idx) }}
             onClick={() => handleTilePress(t)}
-            disabled={!profileKey}
+            disabled={!profileKey || (t.key === "stripepayouts" && stripeStatus.loading)}
             aria-label={t.label}
             title={t.label}
           >
@@ -256,16 +357,6 @@ export default function OwnerHomePage() {
       </div>
     </div>
   );
-}
-
-function hexToRgba(hex, a = 1) {
-  const h = String(hex || "").replace("#", "").trim();
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
-  if (full.length !== 6) return `rgba(129,140,248,${a})`;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${a})`;
 }
 
 const styles = {
@@ -348,6 +439,36 @@ const styles = {
   },
   missingTitle: { color: "#fecaca", fontWeight: 900, fontSize: 13 },
   missingText: { marginTop: 6, color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 700 },
+  stripeBar: {
+    position: "relative",
+    zIndex: 2,
+    margin: "8px 22px 0",
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(148,163,184,0.2)",
+    background: "rgba(15,23,42,0.45)",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  stripeBarLabel: {
+    fontSize: 12,
+    color: "#9ca3af",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontWeight: 800,
+  },
+  stripeBarValue: {
+    fontSize: 12,
+    color: "#e5e7eb",
+    fontWeight: 800,
+  },
+  stripeBarError: {
+    fontSize: 12,
+    color: "#fca5a5",
+    fontWeight: 700,
+  },
   field: {
     position: "relative",
     zIndex: 2,
@@ -474,6 +595,8 @@ function css(accent) {
     text-transform: uppercase;
     color: rgba(226,232,240,0.95);
     text-shadow: 0 14px 32px rgba(0,0,0,0.45);
+    text-align: center;
+    padding: 0 8px;
   }
 
   @media (max-width: 520px){
