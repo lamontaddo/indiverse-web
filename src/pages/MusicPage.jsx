@@ -1,6 +1,8 @@
-// src/pages/MusicPage.jsx ✅ FULL DROP-IN (WEB) — DIRECT FIX (NO EXTRA CHANGES)
-// ✅ Fixes blank screen by hardening apiJsonOrThrow JSON parsing (prevents crash on non-JSON/empty responses)
-// ✅ Keeps YOUR existing layout + logic (catalog, stream, checkout, preview stop, refresh on focus)
+// src/pages/MusicPage.jsx ✅ FULL DROP-IN (WEB)
+// ✅ Adds free-item "Add to Library"
+// ✅ Paid items still use Stripe checkout
+// ✅ Free claim creates MusicPurchase via /api/music/free-claim
+// ✅ Refreshes catalog after successful free claim
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -19,8 +21,6 @@ function safeUrl(s) {
 function isHttpUrl(s) {
   return typeof s === "string" && /^https?:\/\//i.test(s.trim());
 }
-
-/* -------------------- JWT decode helpers (no deps) -------------------- */
 function isMongoObjectId(s) {
   return typeof s === "string" && /^[a-f0-9]{24}$/i.test(s.trim());
 }
@@ -30,11 +30,9 @@ function decodeJwtPayload(jwtToken) {
     if (!t) return null;
     const parts = t.split(".");
     if (parts.length < 2) return null;
-
     const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
     const json = atob(b64 + pad);
-
     return JSON.parse(json);
   } catch {
     return null;
@@ -43,23 +41,18 @@ function decodeJwtPayload(jwtToken) {
 function decodeJwtUserId(jwtToken) {
   const p = decodeJwtPayload(jwtToken);
   if (!p) return null;
-
   const direct = p.userId || p.id || p._id || null;
   if (direct) return String(direct);
-
   const sub = p.sub ? String(p.sub) : "";
   if (isMongoObjectId(sub)) return sub;
-
   return null;
 }
 
-/* -------------------- API helpers -------------------- */
 function apiBase() {
   const base = String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
   return base;
 }
 
-// ✅ DIRECT FIX: harden JSON parsing so page never crashes to blank screen
 async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {}) {
   const base = apiBase();
   const url = `${base}${path}`;
@@ -87,7 +80,6 @@ async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {})
   try {
     return JSON.parse(text);
   } catch {
-    // if backend/proxy returns HTML or empty-ish payload, do not crash UI
     return {};
   }
 }
@@ -120,6 +112,13 @@ function moneyFromCents(cents, currency = "usd") {
     return `$${n.toFixed(2)}`;
   }
 }
+
+function formatPriceLabel(cents, currency = "usd") {
+  const n = Number(cents || 0);
+  if (!Number.isFinite(n) || n <= 0) return "FREE";
+  return moneyFromCents(n, currency);
+}
+
 function formatTime(seconds) {
   const s = Math.max(0, Math.floor(Number(seconds || 0)));
   const m = Math.floor(s / 60);
@@ -130,40 +129,26 @@ function formatTime(seconds) {
 export default function MusicPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const checkoutSuccess = searchParams.get("checkout") === "success";
   const { profileKey: paramsProfileKey } = useParams();
   const profileKey = useMemo(() => cleanKey(paramsProfileKey) || "lamont", [paramsProfileKey]);
 
-  // auth token (match your app) ✅ FIX: reactive token
   const [token, setToken] = useState(() => localStorage.getItem("buyerToken") || "");
   const isAuthed = !!token;
   const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
 
   useEffect(() => {
     const syncToken = () => setToken(localStorage.getItem("buyerToken") || "");
-
     window.addEventListener("focus", syncToken);
     window.addEventListener("storage", syncToken);
     syncToken();
-
     return () => {
       window.removeEventListener("focus", syncToken);
       window.removeEventListener("storage", syncToken);
     };
   }, [location?.key]);
 
-  useEffect(() => {
-    const payload = decodeJwtPayload(token);
-    console.log("[MusicPage] auth =>", {
-      isAuthed,
-      hasToken: !!token,
-      tokenParts: token ? token.split(".").length : 0,
-      buyerUserId: buyerUserId || null,
-      jwtKeys: payload ? Object.keys(payload) : [],
-      sub: payload?.sub || null,
-    });
-  }, [isAuthed, token, buyerUserId]);
-
-  // remote config for bg + label
   const [cfg, setCfg] = useState(null);
   const profile = useMemo(() => getProfileByKeyFromCfg(cfg, profileKey), [cfg, profileKey]);
 
@@ -197,14 +182,12 @@ export default function MusicPage() {
     };
   }, []);
 
-  // catalog
   const [albums, setAlbums] = useState([]);
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAlbumId, setSelectedAlbumId] = useState(null);
   const [errorNote, setErrorNote] = useState("");
 
-  // player
   const audioRef = useRef(null);
   const [playingTrackId, setPlayingTrackId] = useState(null);
   const [currentTrack, setCurrentTrack] = useState(null);
@@ -256,6 +239,13 @@ export default function MusicPage() {
     }));
   }, []);
 
+  const normalizeCatalogAlbums = useCallback((arr) => {
+    return (arr || []).map((a) => ({
+      ...a,
+      isOwned: typeof a.isOwned === "boolean" ? a.isOwned : !!a.isUnlocked,
+    }));
+  }, []);
+
   const reloadCatalog = useCallback(async () => {
     setErrorNote("");
     try {
@@ -263,16 +253,17 @@ export default function MusicPage() {
         headers: buildHeaders(),
       });
 
-      setAlbums(Array.isArray(data?.albums) ? data.albums : []);
+      setAlbums(normalizeCatalogAlbums(Array.isArray(data?.albums) ? data.albums : []));
       setTracks(normalizeCatalogTracks(Array.isArray(data?.tracks) ? data.tracks : []));
     } catch (e) {
       console.error("[MusicPage] reloadCatalog error =>", e?.message || e);
       setErrorNote(String(e?.message || "Unable to load music right now."));
     }
-  }, [buildHeaders, normalizeCatalogTracks]);
+  }, [buildHeaders, normalizeCatalogAlbums, normalizeCatalogTracks]);
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         setLoading(true);
@@ -290,8 +281,7 @@ export default function MusicPage() {
       window.removeEventListener("focus", onFocus);
       stopCurrent();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileKey]);
+  }, [profileKey, checkoutSuccess, reloadCatalog, stopCurrent]);
 
   const filteredTracks = useMemo(() => {
     if (!selectedAlbumId) return tracks;
@@ -343,6 +333,26 @@ export default function MusicPage() {
       return String(json.url);
     },
     [ensureAuthed, profileKey, token, buyerUserId]
+  );
+
+  const claimFreeItem = useCallback(
+    async ({ itemType, itemId }) => {
+      if (!ensureAuthed()) throw new Error("Please log in to add to your library.");
+
+      const body =
+        itemType === "track"
+          ? { itemType: "track", trackId: itemId }
+          : { itemType: "album", albumId: itemId };
+
+      await apiJsonOrThrow("/api/music/free-claim", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify(body),
+      });
+
+      await reloadCatalog();
+    },
+    [ensureAuthed, buildHeaders, reloadCatalog]
   );
 
   const startTrack = useCallback(
@@ -449,12 +459,9 @@ export default function MusicPage() {
     [durationSec, isPreview, currentTrack]
   );
 
-  const seekBy = useCallback(
-    (delta) => {
-      seekTo(positionSec + delta);
-    },
-    [seekTo, positionSec]
-  );
+  const seekBy = useCallback((delta) => {
+    seekTo(positionSec + delta);
+  }, [seekTo, positionSec]);
 
   const effectiveDurationSec = useMemo(() => {
     if (isPreview && currentTrack) return Math.max(1, Number(currentTrack.previewSeconds || 30));
@@ -476,7 +483,6 @@ export default function MusicPage() {
       const ok = confirm(`Open checkout to unlock "${track.title}"?`);
       if (!ok) return;
 
-      // ✅ Use your existing approach (no new behavior)
       let win = null;
       try {
         win = window.open("", "_blank");
@@ -578,6 +584,32 @@ export default function MusicPage() {
     [ensureAuthed, createCheckoutSession]
   );
 
+  const addTrackToLibrary = useCallback(
+    async (track) => {
+      try {
+        await claimFreeItem({ itemType: "track", itemId: String(track._id) });
+        alert(`"${track.title}" was added to your library.`);
+      } catch (e) {
+        alert(e?.message || "Could not add track to library.");
+        console.error("[MusicPage] addTrackToLibrary error =>", e);
+      }
+    },
+    [claimFreeItem]
+  );
+
+  const addAlbumToLibrary = useCallback(
+    async (album) => {
+      try {
+        await claimFreeItem({ itemType: "album", itemId: String(album._id) });
+        alert(`"${album.title}" was added to your library.`);
+      } catch (e) {
+        alert(e?.message || "Could not add album to library.");
+        console.error("[MusicPage] addAlbumToLibrary error =>", e);
+      }
+    },
+    [claimFreeItem]
+  );
+
   const handleBack = useCallback(() => {
     stopCurrent();
     navigate(-1);
@@ -589,7 +621,6 @@ export default function MusicPage() {
       <div className="ms-dim" />
 
       <div className="ms-shell">
-        {/* header */}
         <div className="ms-top">
           <button className="ms-iconBtn" onClick={handleBack} aria-label="Close">
             ✕
@@ -597,7 +628,7 @@ export default function MusicPage() {
 
           <div className="ms-topCenter">
             <div className="ms-title">Music</div>
-            {!isAuthed ? <div className="ms-authHint">Sign in to unlock full tracks.</div> : null}
+            {!isAuthed ? <div className="ms-authHint">Sign in to unlock or add free tracks to your library.</div> : null}
           </div>
 
           <div className="ms-chip">
@@ -608,14 +639,12 @@ export default function MusicPage() {
 
         {errorNote ? <div className="ms-error">{errorNote}</div> : null}
 
-        {/* content */}
         {loading ? (
           <div className="ms-center">
             <div className="ms-muted">Loading vibes…</div>
           </div>
         ) : (
           <div className="ms-body">
-            {/* albums */}
             {albums.length ? (
               <div className="ms-section ms-narrow">
                 <div className="ms-sectionHead">
@@ -629,8 +658,11 @@ export default function MusicPage() {
 
                 <div className="ms-albums">
                   {albums.map((a) => {
-                    const price = moneyFromCents(a.priceCents || 0, a.currency || "usd");
+                    const price = formatPriceLabel(a.priceCents || 0, a.currency || "usd");
                     const selected = selectedAlbumId === a._id;
+                    const isFree = Number(a.priceCents || 0) <= 0;
+                    const owned = !!a.isOwned;
+
                     return (
                       <button
                         key={a._id}
@@ -651,18 +683,35 @@ export default function MusicPage() {
                               {a.title}
                             </div>
 
-                            <button
-                              className="ms-unlockBtn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                unlockAlbum(a);
-                              }}
-                              title="Unlock (opens web checkout)"
-                            >
-                              <span className="ms-globe">🌐</span>
-                              <span>Unlock</span>
-                              <span className="ms-price">{price}</span>
-                            </button>
+                            {owned ? (
+                              <div className="ms-ownedPillInline">✓ In Library</div>
+                            ) : isFree ? (
+                              <button
+                                className="ms-libraryBtn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addAlbumToLibrary(a);
+                                }}
+                                title="Add to Library"
+                              >
+                                <span>＋</span>
+                                <span>Add to Library</span>
+                                <span className="ms-price">{price}</span>
+                              </button>
+                            ) : (
+                              <button
+                                className="ms-unlockBtn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  unlockAlbum(a);
+                                }}
+                                title="Unlock"
+                              >
+                                <span className="ms-globe">🌐</span>
+                                <span>Unlock</span>
+                                <span className="ms-price">{price}</span>
+                              </button>
+                            )}
                           </div>
 
                           <div className="ms-albumMeta">{a.trackCount || 0} tracks • Album</div>
@@ -675,14 +724,14 @@ export default function MusicPage() {
               </div>
             ) : null}
 
-            {/* tracks */}
             <div className="ms-section ms-narrow ms-sectionGrow">
               <div className="ms-sectionTitle">Tracks{currentAlbumLabel ? ` • ${currentAlbumLabel}` : ""}</div>
 
               <div className="ms-tracks">
                 {filteredTracks.map((t) => {
                   const owned = !!t.isOwned;
-                  const price = moneyFromCents(t.priceCents || 0, t.currency || "usd");
+                  const isFree = Number(t.priceCents || 0) <= 0;
+                  const price = formatPriceLabel(t.priceCents || 0, t.currency || "usd");
                   const isThis = playingTrackId === t._id;
 
                   const minutes = t.durationSeconds ? Math.round(Number(t.durationSeconds) / 60) : 0;
@@ -704,10 +753,10 @@ export default function MusicPage() {
                           className={`ms-playBtn ${isThis ? "ms-playBtnActive" : ""}`}
                           onClick={() => {
                             if (isThis && audioRef.current) togglePlayPause();
-                            else startTrack(t, !owned);
+                            else startTrack(t, !t.isUnlocked);
                           }}
                           aria-label="Play/Pause"
-                          title={owned ? "Play" : "Play preview"}
+                          title={t.isUnlocked ? "Play" : "Play preview"}
                         >
                           {playIcon}
                         </button>
@@ -723,20 +772,34 @@ export default function MusicPage() {
                       </div>
 
                       <div className="ms-trackActions">
-                        {!owned ? (
-                          <button className="ms-unlockPill" onClick={() => unlockTrack(t)} title="Unlock (opens web checkout)">
+                        {owned ? (
+                          <div className="ms-ownedPill" title="Unlocked">
+                            ✓ In Library
+                          </div>
+                        ) : isFree ? (
+                          <button
+                            className="ms-libraryPill"
+                            onClick={() => addTrackToLibrary(t)}
+                            title="Add to Library"
+                          >
+                            <span>＋</span>
+                            <span className="ms-unlockWord">Add to Library</span>
+                            <span className="ms-price">{price}</span>
+                          </button>
+                        ) : (
+                          <button
+                            className="ms-unlockPill"
+                            onClick={() => unlockTrack(t)}
+                            title="Unlock"
+                          >
                             <span className="ms-globe">🌐</span>
                             <span className="ms-unlockWord">Unlock</span>
                             <span className="ms-price">{price}</span>
                           </button>
-                        ) : (
-                          <div className="ms-ownedPill" title="Unlocked">
-                            ✓ Unlocked
-                          </div>
                         )}
 
-                        <div className={`ms-badge ${owned ? "ms-badgeOwned" : ""}`}>
-                          {owned ? "Full Access" : "30s Preview"}
+                        <div className={`ms-badge ${t.isUnlocked ? "ms-badgeOwned" : ""}`}>
+                          {t.isUnlocked ? "Full Access" : "30s Preview"}
                         </div>
                       </div>
                     </div>
@@ -747,7 +810,6 @@ export default function MusicPage() {
           </div>
         )}
 
-        {/* player */}
         {currentTrack ? (
           <div className="ms-player">
             <div className="ms-playerTop">
@@ -809,7 +871,7 @@ export default function MusicPage() {
             </div>
 
             <div className="ms-playerNote">
-              Tip: Locked tracks play a short preview. Use <span className="ms-noteStrong">Unlock</span> to open checkout.
+              Tip: paid locked tracks use <span className="ms-noteStrong">Unlock</span>. Free tracks can be added with <span className="ms-noteStrong">Add to Library</span>.
             </div>
           </div>
         ) : null}
@@ -821,6 +883,7 @@ export default function MusicPage() {
           --stroke: rgba(255,255,255,0.12);
           --stroke2: rgba(255,255,255,0.16);
           --cyan: #00ffff;
+          --green: #86efac;
         }
 
         .ms-root{
@@ -831,7 +894,6 @@ export default function MusicPage() {
           overflow:hidden;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         }
-
         .ms-bg{
           position: fixed;
           inset: 0;
@@ -851,7 +913,6 @@ export default function MusicPage() {
             radial-gradient(900px 600px at 78% 0%, rgba(255,255,255,0.06), rgba(0,0,0,0) 60%),
             linear-gradient(to bottom, rgba(0,0,0,0.45), rgba(0,0,0,0.90));
         }
-
         .ms-shell{
           position: relative;
           z-index: 2;
@@ -859,12 +920,10 @@ export default function MusicPage() {
           margin: 0 auto;
           padding: 22px 22px 140px;
         }
-
         .ms-narrow{
           max-width: 980px;
           margin: 0 auto;
         }
-
         .ms-top{
           display:flex;
           align-items:center;
@@ -884,11 +943,7 @@ export default function MusicPage() {
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
           box-shadow: 0 10px 26px rgba(0,0,0,0.32);
-          transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
         }
-        .ms-iconBtn:hover{ border-color: var(--stroke2); }
-        .ms-iconBtn:active{ transform: scale(0.98); opacity: 0.92; }
-
         .ms-topCenter{
           flex: 1;
           display:flex;
@@ -907,9 +962,7 @@ export default function MusicPage() {
           margin-top: 6px;
           font-size: 12px;
           color: rgba(255,255,255,0.70);
-          letter-spacing: 0.2px;
         }
-
         .ms-chip{
           height: 34px;
           display:flex;
@@ -924,21 +977,16 @@ export default function MusicPage() {
           box-shadow: 0 10px 26px rgba(0,0,0,0.28);
           white-space: nowrap;
         }
-        .ms-chipIcon{ opacity: 0.9; }
         .ms-chipText{
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: 0.4px;
           color: rgba(255,255,255,0.88);
         }
-
         .ms-error{
           margin-top: 6px;
           color: rgba(252,165,165,0.95);
           font-size: 12px;
-          letter-spacing: 0.2px;
         }
-
         .ms-center{
           margin-top: 22px;
           min-height: 44vh;
@@ -948,19 +996,9 @@ export default function MusicPage() {
           text-align:center;
           padding: 18px;
         }
-        .ms-muted{
-          color: rgba(255,255,255,0.70);
-          letter-spacing: 0.3px;
-        }
-
-        .ms-body{
-          display:flex;
-          flex-direction: column;
-          gap: 18px;
-        }
-
+        .ms-muted{ color: rgba(255,255,255,0.70); }
+        .ms-body{ display:flex; flex-direction: column; gap: 18px; }
         .ms-sectionGrow{ margin-top: 6px; }
-
         .ms-sectionHead{
           display:flex;
           align-items:center;
@@ -977,7 +1015,6 @@ export default function MusicPage() {
           text-transform: uppercase;
         }
         .ms-sectionHead .ms-sectionTitle{ margin-bottom: 0; }
-
         .ms-clear{
           height: 30px;
           padding: 0 12px;
@@ -988,12 +1025,10 @@ export default function MusicPage() {
           cursor:pointer;
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: 0.3px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
         }
 
-        /* Albums */
         .ms-albums{
           display:grid;
           grid-template-columns: repeat(12, 1fr);
@@ -1015,11 +1050,8 @@ export default function MusicPage() {
           cursor:pointer;
           text-align:left;
           color:#fff;
-          transition: transform 140ms ease, border-color 140ms ease;
         }
-        .ms-albumCard:hover{ transform: translateY(-1px); border-color: var(--stroke2); }
         .ms-albumCardSelected{ border-color: rgba(0,255,255,0.55); }
-
         .ms-albumArt{
           width: 82px; height: 82px;
           border-radius: 16px;
@@ -1035,14 +1067,12 @@ export default function MusicPage() {
           color: rgba(0,255,255,0.9);
           font-weight: 950;
           font-size: 18px;
-          background: radial-gradient(500px 220px at 30% 20%, rgba(0,255,255,0.18), rgba(0,0,0,0) 60%);
         }
         .ms-albumInfo{ flex:1; min-width:0; }
         .ms-albumTop{ display:flex; align-items:center; justify-content: space-between; gap: 12px; }
         .ms-albumTitle{
           font-weight: 950;
           font-size: 14px;
-          letter-spacing: 0.2px;
           overflow:hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -1052,12 +1082,12 @@ export default function MusicPage() {
         .ms-albumMeta{ margin-top: 6px; color: rgba(255,255,255,0.68); font-size: 12px; }
         .ms-viewing{ margin-top: 6px; font-size: 11px; font-weight: 950; color: rgba(0,255,255,0.95); }
 
-        .ms-unlockBtn{
+        .ms-unlockBtn,
+        .ms-libraryBtn{
           height: 30px;
           padding: 0 10px;
           border-radius: 999px;
           border: 1px solid rgba(255,255,255,0.16);
-          background: rgba(0,0,0,0.55);
           color: rgba(255,255,255,0.92);
           display:flex;
           align-items:center;
@@ -1066,26 +1096,38 @@ export default function MusicPage() {
           flex: 0 0 auto;
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: 0.2px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
         }
-        .ms-unlockBtn:hover{ border-color: rgba(255,255,255,0.22); }
-        .ms-globe{ opacity: 0.9; }
-        .ms-price{ opacity: 0.88; }
+        .ms-unlockBtn{ background: rgba(0,0,0,0.55); }
+        .ms-libraryBtn{
+          background: rgba(134,239,172,0.12);
+          border-color: rgba(134,239,172,0.35);
+          color: var(--green);
+        }
+        .ms-ownedPillInline{
+          height: 30px;
+          padding: 0 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(134,239,172,0.35);
+          background: rgba(134,239,172,0.10);
+          color: var(--green);
+          display:flex;
+          align-items:center;
+          font-size: 12px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
 
-        /* Tracks */
         .ms-tracks{
           display:flex;
           flex-direction: column;
           gap: 12px;
         }
-
         .ms-trackRow{
           border-radius: 18px;
           border: 1px solid rgba(255,255,255,0.10);
-          background:
-            linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+          background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
           backdrop-filter: blur(14px);
           -webkit-backdrop-filter: blur(14px);
           box-shadow: 0 18px 52px rgba(0,0,0,0.42);
@@ -1095,22 +1137,13 @@ export default function MusicPage() {
           align-items: center;
           gap: 14px;
         }
-        .ms-trackRow:hover{
-          border-color: rgba(255,255,255,0.16);
-          transform: translateY(-1px);
-        }
-        .ms-trackRowActive{
-          border-color: rgba(0,255,255,0.34);
-          box-shadow: 0 22px 60px rgba(0,0,0,0.50);
-        }
-
+        .ms-trackRowActive{ border-color: rgba(0,255,255,0.34); }
         .ms-trackLeft{
           display:flex;
           align-items:center;
           gap: 12px;
           min-width:0;
         }
-
         .ms-trackArt{
           width: 46px;
           height: 46px;
@@ -1127,9 +1160,7 @@ export default function MusicPage() {
           color: rgba(0,255,255,0.9);
           font-weight: 950;
           font-size: 14px;
-          background: radial-gradient(400px 180px at 30% 20%, rgba(0,255,255,0.16), rgba(0,0,0,0) 60%);
         }
-
         .ms-playBtn{
           width: 38px;
           height: 38px;
@@ -1141,17 +1172,12 @@ export default function MusicPage() {
           place-items:center;
           cursor:pointer;
           flex: 0 0 auto;
-          transition: transform 120ms ease, background 120ms ease;
         }
-        .ms-playBtn:hover{ background: rgba(0,255,255,0.10); }
-        .ms-playBtn:active{ transform: scale(0.98); }
         .ms-playBtnActive{ background: rgba(0,255,255,0.12); }
-
         .ms-trackText{ min-width:0; }
         .ms-trackTitle{
           font-weight: 950;
           font-size: 15px;
-          letter-spacing: 0.2px;
           overflow:hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -1166,7 +1192,6 @@ export default function MusicPage() {
           white-space: nowrap;
           max-width: 52vw;
         }
-
         .ms-trackActions{
           display:flex;
           flex-direction: column;
@@ -1174,46 +1199,47 @@ export default function MusicPage() {
           gap: 8px;
           min-width: 190px;
         }
-
-        .ms-unlockPill{
+        .ms-unlockPill,
+        .ms-libraryPill{
           height: 34px;
           width: 100%;
           justify-content: center;
           padding: 0 12px;
           border-radius: 999px;
-          border: 1px solid rgba(255,255,255,0.16);
-          background: rgba(0,0,0,0.55);
-          color: rgba(255,255,255,0.92);
           display:flex;
           align-items:center;
           gap: 8px;
           cursor:pointer;
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: 0.2px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
         }
-        .ms-unlockPill:hover{ border-color: rgba(255,255,255,0.22); }
-        .ms-unlockWord{ opacity: 0.95; }
-
+        .ms-unlockPill{
+          border: 1px solid rgba(255,255,255,0.16);
+          background: rgba(0,0,0,0.55);
+          color: rgba(255,255,255,0.92);
+        }
+        .ms-libraryPill{
+          border: 1px solid rgba(134,239,172,0.35);
+          background: rgba(134,239,172,0.10);
+          color: var(--green);
+        }
         .ms-ownedPill{
           height: 34px;
           width: 100%;
           border-radius: 999px;
-          border: 1px solid rgba(0,255,0,0.28);
-          background: rgba(0,0,0,0.45);
-          color: rgba(0,255,0,0.92);
+          border: 1px solid rgba(134,239,172,0.35);
+          background: rgba(134,239,172,0.10);
+          color: var(--green);
           display:flex;
           align-items:center;
           justify-content:center;
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: 0.2px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
         }
-
         .ms-badge{
           height: 24px;
           padding: 0 10px;
@@ -1222,7 +1248,6 @@ export default function MusicPage() {
           color: rgba(0,255,255,0.95);
           font-size: 11px;
           font-weight: 950;
-          letter-spacing: 0.25px;
           display:flex;
           align-items:center;
           justify-content:center;
@@ -1230,8 +1255,8 @@ export default function MusicPage() {
           width: fit-content;
         }
         .ms-badgeOwned{
-          border-color: rgba(0,255,0,0.35);
-          color: rgba(0,255,0,0.95);
+          border-color: rgba(134,239,172,0.35);
+          color: var(--green);
         }
 
         .ms-player{
@@ -1249,7 +1274,6 @@ export default function MusicPage() {
           padding: 12px 12px 10px;
           z-index: 5;
         }
-
         .ms-playerTop{
           display:flex;
           align-items:center;
@@ -1267,15 +1291,12 @@ export default function MusicPage() {
         }
         .ms-playerArt img{ width:100%; height:100%; object-fit: cover; display:block; }
         .ms-playerArtPh{ width:100%; height:100%; display:grid; place-items:center; color: rgba(0,255,255,0.9); font-weight: 950; }
-
         .ms-playerText{ flex: 1; min-width:0; }
         .ms-playerTitle{ font-weight: 950; font-size: 13px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ms-playerSub{ margin-top: 4px; color: rgba(255,255,255,0.62); font-size: 12px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ms-playerTime{ color: rgba(255,255,255,0.80); font-size: 12px; font-weight: 900; white-space: nowrap; }
-
         .ms-bar{ height: 6px; border-radius: 999px; background: rgba(255,255,255,0.10); overflow:hidden; cursor:pointer; margin-bottom: 10px; }
         .ms-barFill{ height: 100%; border-radius: 999px; background: var(--cyan); width: 0%; }
-
         .ms-controls{ display:flex; align-items:center; justify-content: space-between; gap: 10px; }
         .ms-ctl{
           width: 36px;
@@ -1287,13 +1308,10 @@ export default function MusicPage() {
           display:grid;
           place-items:center;
           cursor:pointer;
-          transition: transform 120ms ease, opacity 120ms ease;
         }
-        .ms-ctl:active{ transform: scale(0.98); opacity: 0.92; }
         .ms-ctlPrimary{ background: var(--cyan); border-color: var(--cyan); color: #020617; font-weight: 950; }
         .ms-repeatOn{ background: var(--cyan); border-color: var(--cyan); color: #020617; }
         .ms-ctl:disabled{ opacity: 0.45; cursor:not-allowed; }
-
         .ms-playerNote{ margin-top: 8px; color: rgba(255,255,255,0.62); font-size: 12px; }
         .ms-noteStrong{ color: rgba(255,255,255,0.88); font-weight: 950; }
 
@@ -1305,22 +1323,15 @@ export default function MusicPage() {
         @media (max-width: 720px){
           .ms-title{ font-size: 28px; }
           .ms-chip{ display:none; }
-
-          .ms-trackRow{
-            grid-template-columns: 1fr;
-            gap: 10px;
-          }
+          .ms-trackRow{ grid-template-columns: 1fr; gap: 10px; }
           .ms-trackActions{
             flex-direction: row;
             align-items: center;
             justify-content: space-between;
             min-width: 0;
           }
-          .ms-unlockPill, .ms-ownedPill{ width: auto; padding: 0 12px; }
+          .ms-unlockPill, .ms-ownedPill, .ms-libraryPill{ width: auto; padding: 0 12px; }
           .ms-trackTitle, .ms-trackSub{ max-width: 70vw; }
-        }
-        @media (prefers-reduced-motion: reduce){
-          .ms-iconBtn, .ms-albumCard, .ms-playBtn, .ms-ctl, .ms-trackRow{ transition: none; }
         }
       `}</style>
     </div>
