@@ -235,15 +235,13 @@ export default function MusicPage() {
   const normalizeCatalogTracks = useCallback((arr) => {
     return (arr || []).map((t) => ({
       ...t,
-      isOwned: typeof t.isOwned === "boolean" ? t.isOwned : !!t.isUnlocked,
-    }));
+      isOwned: typeof t.isOwned === "boolean" ? t.isOwned : false    }));
   }, []);
 
   const normalizeCatalogAlbums = useCallback((arr) => {
     return (arr || []).map((a) => ({
       ...a,
-      isOwned: typeof a.isOwned === "boolean" ? a.isOwned : !!a.isUnlocked,
-    }));
+      isOwned: typeof a.isOwned === "boolean" ? a.isOwned : false    }));
   }, []);
 
   const reloadCatalog = useCallback(async () => {
