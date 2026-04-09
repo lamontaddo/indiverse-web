@@ -169,10 +169,25 @@ export default function OwnerHomePage() {
     };
   }, [stripeStatus]);
 
+  const earningsTile = useMemo(
+    () => ({
+      key: "earnings",
+      label: "Earnings",
+      ionicon: "cash",
+      to: "ownerearnings",
+      size: 160,
+    }),
+    []
+  );
+  
   const TILES = useMemo(() => {
-    const withoutStripe = baseTiles.filter((t) => String(t.key || "").toLowerCase() !== "stripepayouts");
-    return [stripeTile, ...withoutStripe];
-  }, [baseTiles, stripeTile]);
+    const filtered = baseTiles.filter((t) => {
+      const key = String(t.key || "").toLowerCase();
+      return key !== "stripepayouts" && key !== "earnings";
+    });
+  
+    return [stripeTile, earningsTile, ...filtered];
+  }, [baseTiles, stripeTile, earningsTile]);
 
   const phases = useMemo(
     () =>
