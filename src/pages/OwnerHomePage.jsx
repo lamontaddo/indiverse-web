@@ -1,15 +1,9 @@
-// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web) — adds Stripe payouts tile + status + onboarding
+// src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web)
 // Route: /world/:profileKey/owner/home
 //
-// ✅ Adds Stripe payouts tile
-// ✅ Calls GET /api/owner/stripe/status
-// ✅ Calls POST /api/owner/stripe/onboard
-// ✅ Opens Stripe onboarding URL in browser
-// ✅ Shows tile state:
-//    - Set Up Payouts
-//    - Continue Setup
-//    - Ready to Sell
-// ✅ Keeps all existing owner tile behavior
+// ✅ Keeps Stripe payouts tile + status + onboarding
+// ✅ Adds Earnings tile
+// ✅ Routes Earnings tile to /world/:profileKey/owner/earnings
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -20,6 +14,7 @@ const SPEED = 0.55;
 const AMP_BOOST = 1.1;
 
 const FALLBACK_OWNER_ITEMS = [
+  { key: "earnings", label: "Earnings", ionicon: "cash", to: "ownerearnings", size: 160 },
   { key: "about", label: "About", ionicon: "person-circle", to: "ownerabout", size: 150 },
   { key: "contacts", label: "Contacts", ionicon: "people", to: "ownercontacts", size: 160 },
   { key: "messages", label: "Messages", ionicon: "chatbubbles", to: "ownermessages", size: 150 },
@@ -59,9 +54,9 @@ function ionToEmoji(name = "", tile = null) {
   const label = String(tile?.label || "").toLowerCase();
 
   if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
-  if (key === "flowerorders" || to.includes("consultation") || to.includes("flowerorders") || label.includes("flower"))
-    return "🌹";
+  if (key === "flowerorders" || to.includes("consultation") || to.includes("flowerorders") || label.includes("flower")) return "🌹";
   if (key === "stripepayouts") return "💳";
+  if (key === "earnings" || to.includes("earnings") || label.includes("earning")) return "💸";
 
   if (k.includes("person")) return "👤";
   if (k.includes("people") || k.includes("contacts") || k.includes("users")) return "👥";
@@ -73,8 +68,9 @@ function ionToEmoji(name = "", tile = null) {
   if (k.includes("shirt")) return "👕";
   if (k.includes("video") || k.includes("videocam")) return "🎬";
   if (k.includes("images") || k.includes("image") || k.includes("camera")) return "🖼️";
-  if (k.includes("cart") || k.includes("bag") || k.includes("cash")) return "🛒";
-  if (k.includes("card") || k.includes("cash")) return "💳";
+  if (k.includes("cart") || k.includes("bag")) return "🛒";
+  if (k.includes("card")) return "💳";
+  if (k.includes("cash") || k.includes("wallet")) return "💸";
   if (k.includes("home")) return "🏠";
   return "◉";
 }
@@ -207,6 +203,7 @@ export default function OwnerHomePage() {
   };
 
   const routeMap = {
+    ownerearnings: "earnings",
     ownerabout: "about",
     ownercontacts: "contacts",
     ownermessages: "messages",
@@ -224,6 +221,7 @@ export default function OwnerHomePage() {
 
   const builtOwnerRoutes = new Set([
     "home",
+    "earnings",
     "about",
     "contacts",
     "messages",
