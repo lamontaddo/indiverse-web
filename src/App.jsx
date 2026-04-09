@@ -66,6 +66,8 @@ import OwnerOrdersPage from "./pages/OwnerOrdersPage.jsx";
 import PaidVideosPage from "./pages/PaidVideosPage.jsx";
 import PaidVideoPlayerPage from "./pages/PaidVideoPlayerPage.jsx";
 import OwnerPaidVideosPage from "./pages/OwnerPaidVideosPage.jsx";
+import OwnerEarningsPage from "./pages/OwnerEarningsPage.jsx";
+
 
 // ✅ Temporary stubs
 function Stub({ name }) {
@@ -200,6 +202,7 @@ export default function App() {
           {/* ✅ OWNER LOGIN (MUST be above /:featureKey wildcard) */}
           <Route path="/world/:profileKey/owner/login" element={<OwnerLoginPage />} />
           <Route path="/world/:profileKey/owner/home" element={<OwnerHomePage />} />
+          <Route path="/world/:profileKey/owner/earnings" element={<OwnerEarningsPage />} />
           <Route path="/world/:profileKey/owner/about" element={<OwnerAboutPage />} />
           <Route path="/world/:profileKey/owner/videos" element={<OwnerVideosPage />} />
 
