@@ -37,6 +37,13 @@ function formatDate(value) {
   });
 }
 
+function fallbackEmojiForSale(type) {
+  if (type === "album") return "💿";
+  if (type === "video") return "🎬";
+  if (type === "product") return "🛍️";
+  return "🎵";
+}
+
 export default function OwnerEarningsPage() {
   const navigate = useNavigate();
   const params = useParams();
@@ -176,14 +183,14 @@ export default function OwnerEarningsPage() {
                       style={styles.saleImage}
                     />
                   ) : (
-                    <div style={styles.saleFallback}>🎵</div>
+                    <div style={styles.saleFallback}>{fallbackEmojiForSale(sale.type)}</div>
                   )}
                 </div>
 
                 <div style={styles.saleCenter}>
                   <div style={styles.saleTitle}>{sale.title || "Untitled"}</div>
                   <div style={styles.saleMeta}>
-                    {sale.artist || "Unknown artist"} • {formatDate(sale.createdAt)}
+                    {(sale.typeLabel || "Sale")} • {(sale.subtitle || "—")} • {formatDate(sale.createdAt)}
                   </div>
                 </div>
 
