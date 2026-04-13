@@ -66,6 +66,7 @@ export default function OwnerEarningsPage() {
   const [summary, setSummary] = useState({
     totalRevenue: 0,
     totalSales: 0,
+    netEarnings: 0,
     recentSales: [],
   });
 
@@ -84,6 +85,7 @@ export default function OwnerEarningsPage() {
       setSummary({
         totalRevenue: Number(data?.summary?.totalRevenue || 0),
         totalSales: Number(data?.summary?.totalSales || 0),
+        netEarnings: Number(data?.summary?.netEarnings || 0),
         recentSales: Array.isArray(data?.summary?.recentSales) ? data.summary.recentSales : [],
       });
     } catch (err) {
@@ -145,19 +147,28 @@ export default function OwnerEarningsPage() {
         </div>
       ) : null}
 
-      <div style={styles.cardsRow}>
-        <div className="oe-card">
-          <div className="oe-cardLabel">Total Revenue</div>
-          <div className="oe-cardValue">
-            {loading ? "—" : formatMoney(summary.totalRevenue)}
-          </div>
-        </div>
+<div style={styles.cardsRow}>
+  <div className="oe-card">
+    <div className="oe-cardLabel">Total Revenue</div>
+    <div className="oe-cardValue">
+      {loading ? "—" : formatMoney(summary.totalRevenue)}
+    </div>
+  </div>
 
-        <div className="oe-card">
-          <div className="oe-cardLabel">Total Sales</div>
-          <div className="oe-cardValue">{loading ? "—" : summary.totalSales}</div>
-        </div>
-      </div>
+  <div className="oe-card">
+    <div className="oe-cardLabel">Net Earnings</div>
+    <div className="oe-cardValue">
+      {loading ? "—" : formatMoney(summary.netEarnings)}
+    </div>
+  </div>
+
+  <div className="oe-card">
+    <div className="oe-cardLabel">Total Sales</div>
+    <div className="oe-cardValue">
+      {loading ? "—" : summary.totalSales}
+    </div>
+  </div>
+</div>
 
       <div className="oe-panel">
         <div style={styles.panelHeader}>
