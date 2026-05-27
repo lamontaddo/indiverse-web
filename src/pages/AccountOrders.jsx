@@ -80,6 +80,23 @@ function summarizeItems(items) {
   return `${name}${qty > 1 ? ` (x${qty})` : ""}${extra}`;
 }
 
+function paymentLabel(o) {
+  const provider = safeTrim(o?.provider || '').toLowerCase();
+  const paypalOrderId = safeTrim(o?.paypalOrderId || '');
+  const paypalCaptureId = safeTrim(o?.paypalCaptureId || '');
+  const stripeSessionId = safeTrim(o?.stripeSessionId || '');
+
+  if (provider === 'paypal' || paypalOrderId || paypalCaptureId) {
+    if (paypalOrderId && paypalCaptureId) return `PayPal Order: ${paypalOrderId} • Capture: ${paypalCaptureId}`;
+    if (paypalOrderId) return `PayPal Order: ${paypalOrderId}`;
+    if (paypalCaptureId) return `PayPal Capture: ${paypalCaptureId}`;
+    return 'PayPal';
+  }
+
+  if (stripeSessionId) return `Stripe Session: ${stripeSessionId}`;
+  return '';
+}
+
 export default function AccountOrders() {
   const nav = useNavigate();
 
@@ -163,7 +180,12 @@ export default function AccountOrders() {
                 amountTotalCents: o?.amountTotalCents ?? 0,
                 currency: safeTrim(o?.currency || "usd"),
                 createdAt: o?.createdAt || o?.paidAt || null,
-                stripeSessionId: safeTrim(o?.stripeSessionId || ""),
+                provider: safeTrim(o?.provider || ''),
+                providerRef: safeTrim(o?.providerRef || ''),
+                stripeSessionId: safeTrim(o?.stripeSessionId || ''),
+                stripePaymentIntentId: safeTrim(o?.stripePaymentIntentId || ''),
+                paypalOrderId: safeTrim(o?.paypalOrderId || ''),
+                paypalCaptureId: safeTrim(o?.paypalCaptureId || ''),
                 items: Array.isArray(o?.items) ? o.items : [],
               });
             }
@@ -242,16 +264,26 @@ export default function AccountOrders() {
         ) : (
           <div className="list">
             {items.map((o, idx) => {
-              const id = o.id || o.stripeSessionId || String(idx);
+              const id = o.id || o.paypalOrderId || o.stripeSessionId || String(idx);
               const status = safeTrim(o.status || "unknown");
               const badgeClass = `badge badge_${status.toLowerCase()}`;
+              const payLabel = paymentLabel(o);
 
               return (
                 <button
                   key={`${o.realmKey}:${id}:${idx}`}
                   className="row"
-                  onClick={() => nav(`/account/orders/${encodeURIComponent(id)}`)}
-                  title="Order details page next"
+                  onClick={() => {
+                    alert(
+                      `Order Details\n\n` +
+                        `Order ID: ${o.id || "—"}\n` +
+                        `Provider: ${o.provider || "—"}\n` +
+                        `Status: ${o.status || "—"}\n` +
+                        `Total: ${moneyFromCents(o.amountTotalCents, o.currency)}\n` +
+                        `${paymentLabel(o) || "Payment ID: —"}`
+                    );
+                  }}
+                  title="Order details"
                 >
                   <div className="rowTop">
                     <div className="rowLeft">
@@ -267,14 +299,14 @@ export default function AccountOrders() {
                     </div>
                   </div>
 
-                  {o.stripeSessionId ? <div className="rowSub">session: {o.stripeSessionId}</div> : null}
+                  {payLabel ? <div className="rowSub">{payLabel}</div> : null}
                 </button>
               );
             })}
           </div>
         )}
 
-        <div className="note">Next: we’ll drop in the order details page.</div>
+        <div className="note">Tap an order to view details.</div>
       </div>
 
       <style>{`

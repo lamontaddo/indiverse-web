@@ -35,6 +35,7 @@ import GamesPage from "./pages/GamesPage.jsx";
 import ProductsPage from "./pages/ProductsPage.jsx";
 import ProductDetailsPage from "./pages/ProductDetailsPage.jsx";
 import CartPage from "./pages/CartPage.jsx";
+import CheckoutReturnPage from "./pages/CheckoutReturnPage.jsx";
 
 import AuthSignup from "./pages/AuthSignup";
 import AuthLogin from "./pages/AuthLogin";
@@ -166,6 +167,9 @@ export default function App() {
           <Route path="/" element={<UniverseHome />} />
 
           <Route path="/vaultgate" element={<Stub name="VaultGate" />} />
+
+          <Route path="/checkout/success" element={<CheckoutReturnPage />} />
+          <Route path="/checkout/cancel" element={<CheckoutReturnPage />} />
 
           <Route path="/auth/signup" element={<AuthSignup />} />
           <Route path="/auth/login" element={<AuthLogin />} />

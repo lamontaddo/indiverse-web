@@ -132,6 +132,24 @@ function purchaseTypeLabel(v) {
   return s;
 }
 
+function paymentLabel(order) {
+  const provider = String(order?.provider || '').trim().toLowerCase();
+  const paypalOrderId = String(order?.paypalOrderId || '').trim();
+  const paypalCaptureId = String(order?.paypalCaptureId || '').trim();
+  const stripeSessionId = String(order?.stripeSessionId || '').trim();
+  const stripePaymentIntentId = String(order?.stripePaymentIntentId || '').trim();
+
+  if (provider === 'paypal' || paypalOrderId || paypalCaptureId) {
+    if (paypalOrderId) return `PayPal Order: ${shortId(paypalOrderId, 18)}`;
+    if (paypalCaptureId) return `PayPal Capture: ${shortId(paypalCaptureId, 18)}`;
+    return 'PayPal';
+  }
+
+  if (stripeSessionId) return `Stripe Session: ${shortId(stripeSessionId, 18)}`;
+  if (stripePaymentIntentId) return `Stripe PaymentIntent: ${shortId(stripePaymentIntentId, 18)}`;
+  return 'Payment ID: —';
+}
+
 // supports { shipping:{name,phone,address{line1,line2,city,state,postalCode/postal_code,country}} }
 function formatShippingLines(shipping) {
   const s = shipping || null;
@@ -355,7 +373,7 @@ export default function OwnerOrdersPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search session / userId / paymentIntent…"
+            placeholder="Search payment id / userId / order id…"
             className="oo-search"
             onKeyDown={(e) => {
               if (e.key === "Enter") fetchList();
@@ -421,8 +439,7 @@ export default function OwnerOrdersPage() {
                     </div>
 
                     <div style={styles.rowMeta}>
-                      Session: {shortId(o?.stripeSessionId, 18)} • User:{" "}
-                      {shortId(o?.userId, 12)}
+                      {paymentLabel(o)} • User: {shortId(o?.userId, 12)}
                     </div>
                   </div>
 
@@ -461,14 +478,28 @@ export default function OwnerOrdersPage() {
                   <RowKV label="Status" value={String(detail?.status || "unknown")} />
                   <RowKV label="Total" value={moneyFromCents(detail?.amountTotalCents, detail?.currency)} />
                   <RowKV label="Purchase Type" value={purchaseTypeLabel(detail?.purchaseType)} />
+                  <RowKV label="Provider" value={String(detail?.provider || 'stripe')} />
                   <RowKV label="Paid At" value={toIsoDisplay(detail?.paidAt || detail?.createdAt)} />
                 </Section>
 
                 <Section title="IDs">
                   <RowKV label="Order ID" value={String(detail?._id || "")} mono />
-                  <RowKV label="Session" value={String(detail?.stripeSessionId || "")} mono />
-                  <RowKV label="PaymentIntent" value={String(detail?.stripePaymentIntentId || "")} mono />
-                  <RowKV label="Stripe Acct" value={String(detail?.stripeAccountId || "")} mono />
+
+                  {String(detail?.provider || '').toLowerCase() === 'paypal' || detail?.paypalOrderId || detail?.paypalCaptureId ? (
+                    <>
+                      <RowKV label="PayPal Order" value={String(detail?.paypalOrderId || "")} mono />
+                      <RowKV label="PayPal Capture" value={String(detail?.paypalCaptureId || "")} mono />
+                      <RowKV label="PayPal Payer" value={String(detail?.paypalPayerId || "")} mono />
+                    </>
+                  ) : (
+                    <>
+                      <RowKV label="Stripe Session" value={String(detail?.stripeSessionId || "")} mono />
+                      <RowKV label="PaymentIntent" value={String(detail?.stripePaymentIntentId || "")} mono />
+                      <RowKV label="Stripe Acct" value={String(detail?.stripeAccountId || "")} mono />
+                    </>
+                  )}
+
+                  <RowKV label="Provider Ref" value={String(detail?.providerRef || "")} mono />
                   <RowKV label="User ID" value={String(detail?.userId || "")} mono />
                 </Section>
 

@@ -16,7 +16,43 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getProfileByKey } from "../services/profileRegistry";
 import { profileFetchRaw } from "../services/profileApi";
 
+
 const PREVIEW_LIMIT_MS = 30_000;
+
+function apiBase() {
+  return String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+}
+
+async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {}) {
+  const base = apiBase();
+  const url = `${base}${path}`;
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+      ...headers,
+    },
+    body,
+    credentials: "include",
+  });
+
+  const text = await res.text().catch(() => "");
+
+  if (!res.ok) {
+    throw new Error(`${method} ${path} failed (${res.status}): ${text || res.statusText}`);
+  }
+
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
 
 function cleanStr(v) {
   const s = String(v || "").trim();
@@ -184,7 +220,7 @@ function getMyDisplayName(token) {
   return getLocalDisplayName() || deriveDisplayNameFromBuyerUser() || deriveDisplayNameFromToken(token) || "User";
 }
 
-// ✅ uses your existing checkout route (same one MusicPage uses)
+// ✅ PayPal checkout for paid videos
 async function createVideoCheckoutSession({
   profileKey,
   videoId,
@@ -201,10 +237,11 @@ async function createVideoCheckoutSession({
   if (token) headers.Authorization = `Bearer ${String(token)}`;
   if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
 
-  const res = await profileFetchRaw(profileKey, `/api/checkout/session`, {
+  const data = await apiJsonOrThrow(`/api/paypal/checkout/session`, {
     method: "POST",
     headers,
     body: JSON.stringify({
+      profileKey: String(profileKey || ""),
       itemType: "video",
       videoId: String(videoId),
       title: String(title || "Purchase"),
@@ -213,12 +250,15 @@ async function createVideoCheckoutSession({
     }),
   });
 
-  const data = await readJsonSafe(res);
-  if (!res.ok) throw new Error((data && (data.error || data.message)) || "Unable to start checkout");
-
   const url = cleanStr(data?.url);
   if (!url) throw new Error("No checkout URL returned");
-  return url;
+
+  return {
+    url,
+    provider: cleanStr(data?.provider),
+    orderId: cleanStr(data?.orderId || data?.id),
+    pendingPurchaseId: cleanStr(data?.pendingPurchaseId),
+  };
 }
 
 export default function PaidVideoPlayerPage() {
@@ -228,6 +268,11 @@ export default function PaidVideoPlayerPage() {
 
   const profileKey = String(params.profileKey || "lamont").toLowerCase();
   const videoId = String(params.videoId || "").trim();
+
+  const searchParams = new URLSearchParams(loc.search || "");
+  const checkoutSuccess = searchParams.get("checkout") === "success";
+  const checkoutProvider = String(searchParams.get("provider") || "").trim().toLowerCase();
+  const paypalCheckoutSuccess = checkoutSuccess && checkoutProvider === "paypal";
 
   useMemo(() => getProfileByKey(profileKey), [profileKey]);
   const videoFromRoute = loc?.state?.video || null;
@@ -274,6 +319,7 @@ export default function PaidVideoPlayerPage() {
   const [purchaseOpen, setPurchaseOpen] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutErr, setCheckoutErr] = useState(null);
+  const [checkoutNote, setCheckoutNote] = useState("");
 
   // --- social state ---
   const [liked, setLiked] = useState(() => unwrapBool(videoFromRoute, "liked", false));
@@ -331,6 +377,35 @@ export default function PaidVideoPlayerPage() {
       alive = false;
     };
   }, [profileKey, videoId, videoFromRoute]);
+
+  const refreshVideoMeta = useCallback(async () => {
+    if (!videoId) return null;
+
+    const headers = {
+      "Content-Type": "application/json",
+      "x-profile-key": String(profileKey || ""),
+    };
+    if (token) headers.Authorization = `Bearer ${String(token)}`;
+    if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+
+    const res = await profileFetchRaw(profileKey, `/api/paid-videos/${encodeURIComponent(videoId)}`, {
+      method: "GET",
+      headers,
+    });
+
+    const data = await readJsonSafe(res);
+
+    if (!res.ok) {
+      throw new Error((data && (data.error || data.message)) || "Unable to reload video");
+    }
+
+    setVideoMeta(data);
+    setLiked(unwrapBool(data, "liked", false));
+    setLikeCount(unwrapCountLike(data, "likeCount", 0));
+    setCommentCount(unwrapCountLike(data, "commentCount", 0));
+
+    return data;
+  }, [profileKey, videoId, token, buyerUserId]);
 
   /* ---------------- playable load ---------------- */
 
@@ -430,6 +505,78 @@ export default function PaidVideoPlayerPage() {
     return false;
   }, [isAuthed, token, nav, profileKey, videoId, videoMeta]);
 
+
+  useEffect(() => {
+    if (!paypalCheckoutSuccess || !profileKey || !videoId) return;
+
+    let alive = true;
+
+    (async () => {
+      const storageKey = `paypalPendingVideo:${profileKey}:${videoId}`;
+      const raw = localStorage.getItem(storageKey);
+
+      if (!raw) {
+        setCheckoutNote("PayPal returned successfully, but no pending video checkout was found on this browser.");
+        return;
+      }
+
+      let pending = null;
+      try {
+        pending = JSON.parse(raw);
+      } catch {
+        pending = null;
+      }
+
+      const orderId = cleanStr(pending?.orderId);
+      const pendingPurchaseId = cleanStr(pending?.pendingPurchaseId);
+
+      if (!orderId) {
+        setCheckoutNote("PayPal returned successfully, but the order ID was missing.");
+        return;
+      }
+
+      try {
+        setCheckoutNote("Finalizing your PayPal purchase…");
+
+        const headers = {
+          "Content-Type": "application/json",
+          "x-profile-key": String(profileKey || ""),
+        };
+        if (token) headers.Authorization = `Bearer ${String(token)}`;
+        if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+
+        await apiJsonOrThrow(`/api/paypal/checkout/capture`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ orderId, pendingPurchaseId }),
+        });
+
+        localStorage.removeItem(storageKey);
+
+        if (!alive) return;
+        setCheckoutNote("Purchase complete. Full video unlocked.");
+        setPurchaseOpen(false);
+
+        await refreshVideoMeta();
+        setMode("full");
+
+        nav(loc.pathname, {
+          replace: true,
+          state: loc.state || {},
+        });
+      } catch (e) {
+        console.error("[PaidVideoPlayerPage] PayPal capture error =>", e?.message || e);
+        if (alive) {
+          setCheckoutNote(e?.message || "PayPal payment completed, but we could not unlock this video yet.");
+        }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [paypalCheckoutSuccess, profileKey, videoId, token, buyerUserId, refreshVideoMeta, nav, loc.pathname, loc.state]);
+
   const startCheckout = useCallback(async () => {
     if (!videoId || checkoutBusy) return;
     if (!ensureAuthed()) return;
@@ -442,7 +589,7 @@ export default function PaidVideoPlayerPage() {
       const effectiveCurrency = String(videoMeta?.currency || "usd").toLowerCase();
       const effectivePriceCents = Number(videoMeta?.priceCents || 0);
 
-      const url = await createVideoCheckoutSession({
+      const checkout = await createVideoCheckoutSession({
         profileKey,
         videoId,
         token,
@@ -452,7 +599,19 @@ export default function PaidVideoPlayerPage() {
         priceCents: effectivePriceCents,
       });
 
-      window.location.href = url;
+      if (checkout?.provider === "paypal") {
+        localStorage.setItem(
+          `paypalPendingVideo:${profileKey}:${videoId}`,
+          JSON.stringify({
+            orderId: checkout.orderId || "",
+            pendingPurchaseId: checkout.pendingPurchaseId || "",
+            videoId,
+            createdAt: Date.now(),
+          })
+        );
+      }
+
+      window.location.href = checkout.url;
     } catch (e) {
       setCheckoutErr(e?.message || "Checkout failed");
     } finally {
@@ -882,6 +1041,7 @@ export default function PaidVideoPlayerPage() {
               ) : null}
 
               {checkoutErr ? <div style={S.modalErr}>{checkoutErr}</div> : null}
+              {checkoutNote ? <div style={S.modalNote}>{checkoutNote}</div> : null}
 
               <div style={S.modalRow}>
                 <button
@@ -897,7 +1057,7 @@ export default function PaidVideoPlayerPage() {
                 </button>
               </div>
 
-              <div style={S.modalHint}>Secure checkout via Stripe.</div>
+              <div style={S.modalHint}>Secure checkout via PayPal.</div>
             </div>
           </div>
         </div>
@@ -1260,6 +1420,16 @@ const S = {
   modalBody: { padding: 14 },
   modalMsg: { color: "rgba(255,255,255,0.86)", fontWeight: 900, lineHeight: 1.35 },
   modalErr: { marginTop: 10, color: "#fca5a5", fontWeight: 950, fontSize: 12 },
+  modalNote: {
+    marginTop: 10,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,255,255,0.22)",
+    background: "rgba(0,255,255,0.08)",
+    color: "rgba(255,255,255,0.90)",
+    fontWeight: 900,
+    fontSize: 12,
+  },
   modalRow: { marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" },
   primaryBtn: {
     padding: "11px 14px",

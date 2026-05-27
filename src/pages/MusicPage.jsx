@@ -1,8 +1,9 @@
 // src/pages/MusicPage.jsx ✅ FULL DROP-IN (WEB)
 // ✅ Adds free-item "Add to Library"
-// ✅ Paid items still use Stripe checkout
+// ✅ Paid items use PayPal checkout
+// ✅ Captures PayPal order after redirect and unlocks entitlement
 // ✅ Free claim creates MusicPurchase via /api/music/free-claim
-// ✅ Refreshes catalog after successful free claim
+// ✅ Refreshes catalog after successful free claim / PayPal capture
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -131,6 +132,8 @@ export default function MusicPage() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const checkoutSuccess = searchParams.get("checkout") === "success";
+  const checkoutProvider = cleanKey(searchParams.get("provider"));
+  const paypalCheckoutSuccess = checkoutSuccess && checkoutProvider === "paypal";
   const { profileKey: paramsProfileKey } = useParams();
   const profileKey = useMemo(() => cleanKey(paramsProfileKey) || "lamont", [paramsProfileKey]);
 
@@ -187,6 +190,7 @@ export default function MusicPage() {
   const [loading, setLoading] = useState(true);
   const [selectedAlbumId, setSelectedAlbumId] = useState(null);
   const [errorNote, setErrorNote] = useState("");
+  const [checkoutNote, setCheckoutNote] = useState("");
 
   const audioRef = useRef(null);
   const [playingTrackId, setPlayingTrackId] = useState(null);
@@ -333,7 +337,7 @@ export default function MusicPage() {
           ? { itemType: "album", albumId: itemId }
           : { itemType, itemId };
 
-      const json = await apiJsonOrThrow("/api/checkout/session", {
+      const json = await apiJsonOrThrow("/api/paypal/checkout/session", {
         method: "POST",
         headers: {
           "x-profile-key": String(profileKey || ""),
@@ -344,10 +348,85 @@ export default function MusicPage() {
       });
 
       if (!json?.url) throw new Error("No checkout URL returned");
+
+      if (json?.provider === "paypal") {
+        localStorage.setItem(
+          `paypalPendingMusic:${profileKey}`,
+          JSON.stringify({
+            orderId: json.orderId || json.id || "",
+            pendingPurchaseId: json.pendingPurchaseId || "",
+            itemType,
+            itemId,
+            createdAt: Date.now(),
+          })
+        );
+      }
+
       return String(json.url);
     },
     [ensureAuthed, profileKey, token, buyerUserId]
   );
+
+  useEffect(() => {
+    if (!paypalCheckoutSuccess || !profileKey) return;
+
+    let alive = true;
+
+    (async () => {
+      const storageKey = `paypalPendingMusic:${profileKey}`;
+      const raw = localStorage.getItem(storageKey);
+
+      if (!raw) {
+        setCheckoutNote("PayPal returned successfully, but no pending checkout was found on this browser.");
+        return;
+      }
+
+      let pending = null;
+      try {
+        pending = JSON.parse(raw);
+      } catch {
+        pending = null;
+      }
+
+      const orderId = String(pending?.orderId || "").trim();
+      const pendingPurchaseId = String(pending?.pendingPurchaseId || "").trim();
+
+      if (!orderId) {
+        setCheckoutNote("PayPal returned successfully, but the order ID was missing.");
+        return;
+      }
+
+      try {
+        setCheckoutNote("Finalizing your PayPal purchase…");
+
+        await apiJsonOrThrow("/api/paypal/checkout/capture", {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify({ orderId, pendingPurchaseId }),
+        });
+
+        localStorage.removeItem(storageKey);
+
+        if (!alive) return;
+        setCheckoutNote("Purchase complete. Your music is unlocked.");
+        await reloadCatalog();
+
+        navigate(location.pathname, {
+          replace: true,
+          state: location.state || {},
+        });
+      } catch (e) {
+        console.error("[MusicPage] PayPal capture error =>", e?.message || e);
+        if (alive) {
+          setCheckoutNote(e?.message || "PayPal payment completed, but we could not unlock this item yet.");
+        }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [paypalCheckoutSuccess, profileKey, buildHeaders, reloadCatalog, navigate, location.pathname, location.state]);
 
   const claimFreeItem = useCallback(
     async ({ itemType, itemId }) => {
@@ -497,46 +576,14 @@ export default function MusicPage() {
       const ok = confirm(`Open checkout to unlock "${track.title}"?`);
       if (!ok) return;
 
-      let win = null;
       try {
-        win = window.open("", "_blank");
-        if (win && win.document) {
-          win.document.write(`
-            <html>
-              <head><title>Checkout</title></head>
-              <body style="font-family:system-ui; padding:24px;">
-                <h3>Opening secure checkout…</h3>
-                <p>If nothing happens, return to the previous tab.</p>
-              </body>
-            </html>
-          `);
-          win.document.close();
-        }
-      } catch {
-        win = null;
-      }
+        const url = await createCheckoutSession({
+          itemType: "track",
+          itemId: String(track._id),
+        });
 
-      try {
-        const url = await createCheckoutSession({ itemType: "track", itemId: String(track._id) });
-
-        let navigated = false;
-        if (win && !win.closed) {
-          try {
-            win.location.href = url;
-            win.focus?.();
-            navigated = true;
-          } catch {
-            navigated = false;
-          }
-        }
-
-        if (!navigated) {
-          window.location.href = url;
-        }
+        window.location.href = url;
       } catch (e) {
-        try {
-          win?.close?.();
-        } catch {}
         alert(e?.message || "Could not start checkout.");
         console.error("[MusicPage] unlockTrack checkout error =>", e);
       }
@@ -551,46 +598,14 @@ export default function MusicPage() {
       const ok = confirm(`Open checkout to unlock album "${album.title}"?`);
       if (!ok) return;
 
-      let win = null;
       try {
-        win = window.open("", "_blank");
-        if (win && win.document) {
-          win.document.write(`
-            <html>
-              <head><title>Checkout</title></head>
-              <body style="font-family:system-ui; padding:24px;">
-                <h3>Opening secure checkout…</h3>
-                <p>If nothing happens, return to the previous tab.</p>
-              </body>
-            </html>
-          `);
-          win.document.close();
-        }
-      } catch {
-        win = null;
-      }
+        const url = await createCheckoutSession({
+          itemType: "album",
+          itemId: String(album._id),
+        });
 
-      try {
-        const url = await createCheckoutSession({ itemType: "album", itemId: String(album._id) });
-
-        let navigated = false;
-        if (win && !win.closed) {
-          try {
-            win.location.href = url;
-            win.focus?.();
-            navigated = true;
-          } catch {
-            navigated = false;
-          }
-        }
-
-        if (!navigated) {
-          window.location.href = url;
-        }
+        window.location.href = url;
       } catch (e) {
-        try {
-          win?.close?.();
-        } catch {}
         alert(e?.message || "Could not start checkout.");
         console.error("[MusicPage] unlockAlbum checkout error =>", e);
       }
@@ -652,6 +667,7 @@ export default function MusicPage() {
         </div>
 
         {errorNote ? <div className="ms-error">{errorNote}</div> : null}
+        {checkoutNote ? <div className="ms-checkoutNote">{checkoutNote}</div> : null}
 
         {loading ? (
           <div className="ms-center">
@@ -675,7 +691,7 @@ export default function MusicPage() {
                     const price = formatPriceLabel(a.priceCents || 0, a.currency || "usd");
                     const selected = selectedAlbumId === a._id;
                     const isFree = Number(a.priceCents || 0) <= 0;
-                    const owned = !!a.isOwned;
+                    const owned = !!a.isOwned || !!a.isUnlocked;
 
                     return (
                       <button
@@ -743,7 +759,7 @@ export default function MusicPage() {
 
               <div className="ms-tracks">
                 {filteredTracks.map((t) => {
-                  const owned = !!t.isOwned;
+                  const owned = !!t.isOwned || !!t.isUnlocked;
                   const isFree = Number(t.priceCents || 0) <= 0;
                   const price = formatPriceLabel(t.priceCents || 0, t.currency || "usd");
                   const isThis = playingTrackId === t._id;
@@ -885,7 +901,7 @@ export default function MusicPage() {
             </div>
 
             <div className="ms-playerNote">
-              Tip: paid locked tracks use <span className="ms-noteStrong">Unlock</span>. Free tracks can be added with <span className="ms-noteStrong">Add to Library</span>.
+              Tip: paid locked tracks use <span className="ms-noteStrong">Unlock</span> with PayPal. Free tracks can be added with <span className="ms-noteStrong">Add to Library</span>.
             </div>
           </div>
         ) : null}
@@ -1000,6 +1016,16 @@ export default function MusicPage() {
           margin-top: 6px;
           color: rgba(252,165,165,0.95);
           font-size: 12px;
+        }
+        .ms-checkoutNote{
+          margin-top: 6px;
+          padding: 10px 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(0,255,255,0.22);
+          background: rgba(0,255,255,0.08);
+          color: rgba(255,255,255,0.90);
+          font-size: 12px;
+          font-weight: 850;
         }
         .ms-center{
           margin-top: 22px;

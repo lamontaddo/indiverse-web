@@ -1,11 +1,11 @@
 // src/pages/CartPage.jsx ✅ FULL DROP-IN (Web Cart)
 // Supports BOTH carts:
 //  - Flowers (default): POST /api/flowers/checkout
-//  - Products: POST /api/checkout/products
+//  - Products: POST /api/paypal/checkout/session
 //
 // ✅ Profile-aware list (only this profile)
 // ✅ Clear cart for this profile (products-only if products mode)
-// ✅ Stripe checkout opens via window.location (Safari-safe)
+// ✅ PayPal checkout opens via window.location (Safari-safe)
 // ✅ Products checkout REQUIRES login via Authorization Bearer token
 // ✅ No Expo deps
 
@@ -169,7 +169,7 @@ export default function CartPage() {
 
   const subtitleText = isEmpty
     ? "Your cart is empty"
-    : `${totalQty} item${totalQty === 1 ? "" : "s"} • Stripe-secured checkout`;
+    : `${totalQty} item${totalQty === 1 ? "" : "s"} • ${cartMode === "products" ? "PayPal-secured checkout" : "Stripe-secured checkout"}`;
 
   const emptyCtaLabel = cartMode === "products" ? "Browse products" : "Browse arrangements";
   const browseHref =
@@ -235,7 +235,9 @@ export default function CartPage() {
         }
 
         const payload = {
-          // ✅ DO NOT SEND userId anymore (server uses req.userId from JWT)
+          profileKey: String(profileKey || ""),
+          purchaseType: "products",
+          itemType: "products",
           items: filteredItems.map((it) => ({
             productId: String(getLineId(it) || ""),
             quantity: Number(it?.quantity || 1),
@@ -244,7 +246,7 @@ export default function CartPage() {
           })),
         };
 
-        const res = await profileFetch(profileKey, "/api/checkout/products", {
+        const res = await profileFetch(profileKey, "/api/paypal/checkout/session", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -255,7 +257,19 @@ export default function CartPage() {
           body: JSON.stringify(payload),
         });
 
-        if (!res?.ok) throw new Error(res?.error || "Unable to start checkout.");
+        if (!res?.ok) throw new Error(res?.error || "Unable to start PayPal checkout.");
+
+        localStorage.setItem(
+          `paypalPendingProducts:${normLower(profileKey)}`,
+          JSON.stringify({
+            orderId: res.orderId || res.id || "",
+            pendingPurchaseId: res.pendingPurchaseId || "",
+            profileKey: normLower(profileKey),
+            mode: "products",
+            createdAt: Date.now(),
+          })
+        );
+
         openCheckoutUrl(res);
         return;
       }
@@ -409,7 +423,9 @@ export default function CartPage() {
             <div style={styles.summaryRow}>
               <div>
                 <div style={styles.summaryLabel}>Subtotal</div>
-                <div style={styles.summaryHint}>Taxes & delivery handled during Stripe checkout.</div>
+                <div style={styles.summaryHint}>
+                  Taxes & delivery handled during {cartMode === "products" ? "PayPal" : "Stripe"} checkout.
+                </div>
               </div>
               <div style={styles.summaryValue}>{subtotalText}</div>
             </div>
@@ -430,7 +446,7 @@ export default function CartPage() {
                 {checkingOut
                   ? "Opening…"
                   : hasPriceForAll
-                  ? "Checkout with Stripe"
+                  ? cartMode === "products" ? "Checkout with PayPal" : "Checkout with Stripe"
                   : "Request consultation"}
               </button>
             </div>

@@ -71,11 +71,25 @@ export function getApiBaseUrl(profileKey) {
   const pk = normProfileKey(profileKey);
   const p = pk ? getProfileByKey(pk) : null;
 
+  // ✅ Local/dev override must win.
+  // Remote config may contain deployed apiBaseUrl, so local testing must not
+  // accidentally call Render.
+  const envBase =
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_EXPO_PUBLIC_API_BASE_URL ||
+    '';
+
+  const isLocalBrowser =
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1'].includes(String(window.location.hostname || '').toLowerCase());
+
+  const devLocalBase = isLocalBrowser ? 'http://localhost:5050' : '';
+
   const base =
+    devLocalBase ||
+    envBase ||
     p?.apiBaseUrl ||
     p?.endpoints?.apiBaseUrl ||
-    import.meta.env.VITE_EXPO_PUBLIC_API_BASE_URL ||
-    import.meta.env.VITE_API_BASE_URL ||
     '';
 
   return cleanBase(base);
