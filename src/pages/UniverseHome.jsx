@@ -152,7 +152,42 @@ function useLongPress(callback, ms = 5000) {
 }
 
 const IconMedia = memo(function IconMedia({ mod }) {
+  const videoRef = useRef(null);
   const remoteUrl = mod?.assets?.iconUrl || '';
+
+  // ✅ iPhone/Safari: force the video to try playing after mount/load.
+  // Safari often shows the big play button unless the element is muted + playsInline
+  // and play() is triggered after metadata is ready.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !isVideoUrl(remoteUrl)) return;
+
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.setAttribute('muted', '');
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+
+    const tryPlay = async () => {
+      try {
+        video.currentTime = video.currentTime || 0.001;
+        await video.play();
+      } catch (e) {
+        console.log('Icon video autoplay blocked:', mod?.key || mod?.label, e?.message);
+      }
+    };
+
+    tryPlay();
+    video.addEventListener('loadedmetadata', tryPlay);
+    video.addEventListener('canplay', tryPlay);
+
+    return () => {
+      video.removeEventListener('loadedmetadata', tryPlay);
+      video.removeEventListener('canplay', tryPlay);
+    };
+  }, [remoteUrl, mod?.key, mod?.label]);
+
   if (!remoteUrl) {
     return (
       <div className="iconFallback">
@@ -164,13 +199,19 @@ const IconMedia = memo(function IconMedia({ mod }) {
   if (isVideoUrl(remoteUrl)) {
     return (
       <video
+        ref={videoRef}
         className="iconMedia"
         src={remoteUrl}
         muted
+        defaultMuted
         loop
         playsInline
+        webkit-playsinline="true"
         autoPlay
-        preload="metadata"
+        preload="auto"
+        controls={false}
+        disablePictureInPicture
+        controlsList="nodownload nofullscreen noplaybackrate"
       />
     );
   }
@@ -581,6 +622,16 @@ export default function UniverseHome() {
           height: 100%;
           object-fit: cover;
           display: block;
+          pointer-events: none;
+        }
+
+        video.iconMedia::-webkit-media-controls,
+        video.iconMedia::-webkit-media-controls-start-playback-button,
+        video.iconMedia::-webkit-media-controls-play-button {
+          display: none !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+          -webkit-appearance: none;
         }
 
         .mediaFallbackOverlay {
