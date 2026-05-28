@@ -1,7 +1,8 @@
 // src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web)
 // Route: /world/:profileKey/owner/home
 //
-// ✅ Keeps Stripe payouts tile + status + onboarding
+// ✅ Keeps owner payment tile
+// ✅ PayPal payout info modal for owner payment email
 // ✅ Adds Earnings tile
 // ✅ Routes Earnings tile to /world/:profileKey/owner/earnings
 
@@ -114,6 +115,10 @@ export default function OwnerHomePage() {
     error: "",
   });
 
+  const [paypalModalOpen, setPaypalModalOpen] = useState(false);
+  const [paypalEmail, setPaypalEmail] = useState("");
+  const [paypalSaving, setPaypalSaving] = useState(false);
+
   async function loadStripeStatus() {
     if (!profileKey) return;
 
@@ -156,18 +161,14 @@ export default function OwnerHomePage() {
   }, [profileKey]);
 
   const stripeTile = useMemo(() => {
-    let label = "Set Up Payouts";
-    if (stripeStatus.ready) label = "Ready to Sell";
-    else if (stripeStatus.hasAccount) label = "Continue Setup";
-
     return {
       key: "stripepayouts",
-      label,
+      label: "Payment Info",
       ionicon: "card",
-      to: "__stripe_payouts__",
+      to: "__paypal_payment_info__",
       size: 160,
     };
-  }, [stripeStatus]);
+  }, []);
 
   const earningsTile = useMemo(
     () => ({
@@ -251,25 +252,30 @@ export default function OwnerHomePage() {
     "paid-videos",
   ]);
 
-  async function handleStripePayouts() {
+  async function handleSavePayPalInfo() {
     if (!profileKey) return;
 
+    const email = String(paypalEmail || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      window.alert("Enter a valid PayPal email address.");
+      return;
+    }
+
     try {
-      const data = await ownerJsonWeb("/api/owner/stripe/onboard", {
+      setPaypalSaving(true);
+
+      await ownerJsonWeb("/api/owner/paypal/payment-info", {
         method: "POST",
         profileKey,
-        body: JSON.stringify({}),
+        body: JSON.stringify({ paypalEmail: email }),
       });
 
-      const url = String(data?.url || "").trim();
-      if (!url) {
-        window.alert("No Stripe onboarding URL returned.");
-        return;
-      }
-
-      window.location.assign(url);
+      window.alert("PayPal payment info saved.");
+      setPaypalModalOpen(false);
     } catch (err) {
-      window.alert(err?.message || "Unable to start Stripe onboarding.");
+      window.alert(err?.message || "Unable to save PayPal payment info.");
+    } finally {
+      setPaypalSaving(false);
     }
   }
 
@@ -278,8 +284,8 @@ export default function OwnerHomePage() {
 
     const raw = String(tile.to).toLowerCase().trim();
 
-    if (raw === "__stripe_payouts__") {
-      await handleStripePayouts();
+    if (raw === "__paypal_payment_info__" || raw === "__stripe_payouts__") {
+      setPaypalModalOpen(true);
       return;
     }
 
@@ -300,13 +306,7 @@ export default function OwnerHomePage() {
     navigate(`/world/${encodeURIComponent(profileKey)}`, { state: { profileKey, bgUrl } });
   };
 
-  const stripeHint = stripeStatus.loading
-    ? "Checking payouts…"
-    : stripeStatus.ready
-      ? "Stripe ready"
-      : stripeStatus.hasAccount
-        ? "Finish Stripe setup"
-        : "No Stripe account yet";
+  const stripeHint = "Add your PayPal email so admin can send payouts.";
 
   return (
     <div style={styles.page}>
@@ -339,7 +339,7 @@ export default function OwnerHomePage() {
 
       {profileKey ? (
         <div style={styles.stripeBar}>
-          <span style={styles.stripeBarLabel}>Payouts:</span>
+          <span style={styles.stripeBarLabel}>PayPal Payouts:</span>
           <span style={styles.stripeBarValue}>{stripeHint}</span>
           {!!stripeStatus.error ? <span style={styles.stripeBarError}>• {stripeStatus.error}</span> : null}
         </div>
@@ -352,7 +352,7 @@ export default function OwnerHomePage() {
             className="oh-tile"
             style={{ width: t.size, height: t.size, transform: tileTransform(idx) }}
             onClick={() => handleTilePress(t)}
-            disabled={!profileKey || (t.key === "stripepayouts" && stripeStatus.loading)}
+            disabled={!profileKey}
             aria-label={t.label}
             title={t.label}
           >
@@ -363,6 +363,43 @@ export default function OwnerHomePage() {
           </button>
         ))}
       </div>
+
+      {paypalModalOpen ? (
+        <div style={styles.modalOverlay} onMouseDown={(e) => e.target === e.currentTarget && setPaypalModalOpen(false)}>
+          <div style={styles.modalCard}>
+            <div style={styles.modalTop}>
+              <div>
+                <div style={styles.modalTitle}>PayPal Payment Info</div>
+                <div style={styles.modalSub}>This is the email admin will use to send your payouts.</div>
+              </div>
+
+              <button className="oh-pill" onClick={() => setPaypalModalOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <label style={styles.modalLabel}>PayPal Email</label>
+            <input
+              value={paypalEmail}
+              onChange={(e) => setPaypalEmail(e.target.value)}
+              placeholder="you@example.com"
+              style={styles.modalInput}
+              type="email"
+              autoFocus
+            />
+
+            <div style={styles.modalActions}>
+              <button className="oh-pill" onClick={() => setPaypalModalOpen(false)} disabled={paypalSaving}>
+                Cancel
+              </button>
+
+              <button className="oh-pill" onClick={handleSavePayPalInfo} disabled={paypalSaving}>
+                {paypalSaving ? "Saving…" : "Save PayPal Info"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div style={styles.footerNote}>
         <span style={{ opacity: 0.9 }}>Profile:</span>{" "}
@@ -506,6 +543,71 @@ const styles = {
     padding: "8px 10px",
     borderRadius: 999,
     backdropFilter: "blur(10px)",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 50,
+    background: "rgba(0,0,0,0.62)",
+    backdropFilter: "blur(8px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  modalCard: {
+    width: "min(520px, 94vw)",
+    borderRadius: 24,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(15,23,42,0.96)",
+    boxShadow: "0 30px 90px rgba(0,0,0,0.65)",
+    padding: 16,
+  },
+  modalTop: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 900,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  modalSub: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "rgba(203,213,225,0.8)",
+    lineHeight: "18px",
+  },
+  modalLabel: {
+    display: "block",
+    fontSize: 12,
+    fontWeight: 900,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    color: "rgba(203,213,225,0.85)",
+    marginBottom: 8,
+  },
+  modalInput: {
+    width: "100%",
+    height: 46,
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(2,6,23,0.65)",
+    color: "#fff",
+    padding: "0 14px",
+    outline: "none",
+    fontWeight: 800,
+  },
+  modalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 14,
+    flexWrap: "wrap",
   },
 };
 

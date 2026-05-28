@@ -10,9 +10,18 @@
 // ✅ Adds missing export: ownerFetchWeb (so pages importing it won't break)
 // ✅ Keeps existing exports: ownerFetchRawWeb, ownerJsonWeb, normalizeProfileKey, getOwnerToken, clearOwnerToken
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.trim() ||
-  "https://indiverse-backend.onrender.com";
+function getOwnerApiBaseUrl() {
+  const envBase = import.meta.env.VITE_API_BASE_URL?.trim() || "";
+
+  const isLocalBrowser =
+    typeof window !== "undefined" &&
+    ["localhost", "127.0.0.1"].includes(String(window.location.hostname || "").toLowerCase());
+
+  // Local owner testing should hit the local backend even if remote config/env points to Render.
+  if (isLocalBrowser) return "http://localhost:5050";
+
+  return envBase || "https://indiverse-backend.onrender.com";
+}
 
 function clean(url) {
   return String(url || "").replace(/\/+$/, "");
@@ -97,7 +106,7 @@ export async function ownerFetchRawWeb(path, options = {}) {
   requireProfileKeyOrThrow(path, profileKey);
 
   const token = getOwnerToken(profileKey);
-  const url = joinUrl(API_BASE, path);
+  const url = joinUrl(getOwnerApiBaseUrl(), path);
 
   const bodyIsFormData =
     typeof FormData !== "undefined" && body instanceof FormData;
