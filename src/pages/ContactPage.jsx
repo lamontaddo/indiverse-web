@@ -1,7 +1,7 @@
 // src/pages/ContactPage.jsx ✅ FULL DROP-IN (WEB) — glass chat + step wizard + S3 selfie upload (camera OR device upload)
 // Route: /world/:profileKey/contact
 //
-// ✅ FIX: Address + Note now support NEWLINES (Enter inserts newline) — no accidental submit
+// ✅ FIX: Note supports NEWLINES (Enter inserts newline) — no accidental submit
 // ✅ Name + Phone still submit on Enter
 // ✅ Uses backend:
 //    - POST /api/contacts/sign-selfie-upload  (presign)  -> returns { putUrl, fileUrl, requiredHeaders }
@@ -55,6 +55,12 @@ function validName(v) {
 
 function validPhone(v) {
   return onlyDigits(v).length >= 10;
+}
+
+function validOptionalEmail(v) {
+  const s = String(v || '').trim();
+  if (!s) return true;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
 function formatPhonePretty(v) {
@@ -209,7 +215,7 @@ export default function ContactPage() {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
   const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
+  const [email, setEmail] = useState('');
   const [note, setNote] = useState('');
 
   // selfie state
@@ -217,7 +223,7 @@ export default function ContactPage() {
   const [selfieFileName, setSelfieFileName] = useState('');
   const [selfieFile, setSelfieFile] = useState(null);
 
-  // 0=name, 1=phone, 2=address(opt), 3=note(opt), 4=selfie(opt), 5=confirm
+  // 0=name, 1=phone, 2=email(opt), 3=note(opt), 4=selfie(opt), 5=confirm
   const [step, setStep] = useState(0);
   const [input, setInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -268,8 +274,8 @@ export default function ContactPage() {
 
     m.push({ role: 'user', text: formatPhonePretty(phone) });
 
-    if (step === 2 && !address) return m;
-    m.push({ role: 'user', text: address ? address : '(No address)' });
+    if (step === 2 && !email) return m;
+    m.push({ role: 'user', text: email ? email : '(No email)' });
 
     if (step === 3 && !note) return m;
     m.push({ role: 'user', text: note ? note : '(No note)' });
@@ -280,7 +286,7 @@ export default function ContactPage() {
     m.push({ role: 'ai', text: 'Confirm the details below — then we’ll save this contact.' });
 
     return m;
-  }, [ownerName, first, last, phone, address, note, selfieObjUrl, step, hasProfileKey]);
+  }, [ownerName, first, last, phone, email, note, selfieObjUrl, step, hasProfileKey]);
 
   // auto-scroll
   useEffect(() => {
@@ -318,16 +324,23 @@ export default function ContactPage() {
     setStep(2);
   }, [input]);
 
-  const advanceAddress = useCallback(() => {
+  const advanceEmail = useCallback(() => {
     setErrorNote('');
-    if (input.trim()) setAddress(input.trim());
+    const cleaned = input.trim();
+
+    if (!validOptionalEmail(cleaned)) {
+      setErrorNote('Please enter a valid email address, or skip this step.');
+      return;
+    }
+
+    if (cleaned) setEmail(cleaned.toLowerCase());
     setInput('');
     setStep(3);
   }, [input]);
 
-  const skipAddress = useCallback(() => {
+  const skipEmail = useCallback(() => {
     setErrorNote('');
-    setAddress('');
+    setEmail('');
     setInput('');
     setStep(3);
   }, []);
@@ -454,7 +467,7 @@ export default function ContactPage() {
         firstName: first,
         lastName: last,
         phone: phone,
-        address: address || '',
+        email: email || '',
         note: note || '',
         selfieUrl: selfieUrl || '',
       };
@@ -481,9 +494,9 @@ export default function ContactPage() {
     } finally {
       setSaving(false);
     }
-  }, [first, last, phone, address, note, activeProfileKey, ownerName, navigate, bgUrl, uploadSelfieIfNeeded, hasProfileKey]);
+  }, [first, last, phone, email, note, activeProfileKey, ownerName, navigate, bgUrl, uploadSelfieIfNeeded, hasProfileKey]);
 
-  // ✅ FIX: step 2/3 uses textarea + allows Enter new line
+  // ✅ FIX: note uses textarea + allows Enter new line
   const composer = useMemo(() => {
     if (!hasProfileKey) return null;
 
@@ -524,12 +537,12 @@ export default function ContactPage() {
     if (step === 2)
       return {
         ...common,
-        icon: '📍',
-        placeholder: 'Address (optional)',
-        hint: 'Enter = new line • use the button to save • or Skip',
-        onSend: advanceAddress,
-        multiline: true,
-        rows: 3,
+        icon: '✉️',
+        placeholder: 'Email address (optional)',
+        hint: 'Optional email (Enter to save) • or Skip',
+        onSend: advanceEmail,
+        type: 'email',
+        multiline: false,
       };
 
     if (step === 3)
@@ -544,7 +557,7 @@ export default function ContactPage() {
       };
 
     return null;
-  }, [hasProfileKey, step, input, advanceName, advancePhone, advanceAddress, advanceNote]);
+  }, [hasProfileKey, step, input, advanceName, advancePhone, advanceEmail, advanceNote]);
 
   const headerTitle = useMemo(() => {
     return location?.state?.title || `Connect • ${ownerName}`;
@@ -583,13 +596,13 @@ export default function ContactPage() {
               </Bubble>
             ))}
 
-            {hasProfileKey && step === 2 && !address && (
+            {hasProfileKey && step === 2 && !email && (
               <Bubble role="ai">
-                <div style={{ color: '#fff' }}>Add an address? (optional)</div>
+                <div style={{ color: '#fff' }}>Add an email? (optional)</div>
                 <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <Chip onClick={skipAddress}>Skip</Chip>
-                  <Chip variant="primary" onClick={advanceAddress} disabled={saving}>
-                    Save address
+                  <Chip onClick={skipEmail}>Skip</Chip>
+                  <Chip variant="primary" onClick={advanceEmail} disabled={saving}>
+                    Save email
                   </Chip>
                 </div>
               </Bubble>
@@ -646,9 +659,9 @@ export default function ContactPage() {
                     </div>
 
                     <div style={styles.block}>
-                      <div style={styles.blockLabel}>Address</div>
+                      <div style={styles.blockLabel}>Email</div>
                       <div style={styles.blockValue}>
-                        {address ? <span style={{ whiteSpace: 'pre-wrap' }}>{address}</span> : <span style={{ opacity: 0.75 }}>(none)</span>}
+                        {email ? email : <span style={{ opacity: 0.75 }}>(none)</span>}
                       </div>
                       <div style={styles.blockActions}>
                         <Chip onClick={() => editStep(2)}>✎ Edit</Chip>
@@ -709,7 +722,7 @@ export default function ContactPage() {
             )}
           </div>
 
-          {/* ✅ FIX: show composer for steps 0..3 (NOT 4) and use textarea for address/note */}
+          {/* ✅ FIX: show composer for steps 0..3 (NOT 4) and use textarea for note only */}
           {composer && step < 4 && (
             <div style={styles.composerWrap}>
               <div style={{ ...styles.composer, ...(composer.multiline ? styles.composerMultiline : null) }}>
@@ -748,8 +761,8 @@ export default function ContactPage() {
                 <span style={{ opacity: 0.75 }}>{composer.hint}</span>
                 {step === 2 && <span style={{ opacity: 0.75 }}> • or </span>}
                 {step === 2 && (
-                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={skipAddress}>
-                    Skip address
+                  <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={skipEmail}>
+                    Skip email
                   </span>
                 )}
                 {step === 3 && <span style={{ opacity: 0.75 }}> • or </span>}

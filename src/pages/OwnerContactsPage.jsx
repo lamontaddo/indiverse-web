@@ -11,7 +11,7 @@
 // ✅ If missing profileKey: blocks API + shows banner
 // ✅ 401/403 redirects to OwnerLogin
 // ✅ res.ok checks everywhere
-// ✅ Search + expand/collapse + refresh
+// ✅ Search name/phone/email + expand/collapse + refresh
 // ✅ tel:/sms: actions
 // ✅ Selfie avatar + cache-bust + visible onError diagnostics
 // ✅ Delete with confirm + optimistic UI + rollback on failure + "Deleting…" lock
@@ -314,7 +314,8 @@ export default function OwnerContactsPage() {
       list = list.filter((c) => {
         const name = `${c.firstName || ""} ${c.lastName || ""}`.toLowerCase();
         const phone = String(c.phone || "").toLowerCase();
-        return name.includes(q) || phone.includes(q);
+        const email = String(c.email || "").toLowerCase();
+        return name.includes(q) || phone.includes(q) || email.includes(q);
       });
     }
 
@@ -334,6 +335,7 @@ export default function OwnerContactsPage() {
 
   const openCall = (phone) => phone && safeOpenHref(`tel:${phone}`);
   const openSms = (phone) => phone && safeOpenHref(`sms:${phone}`);
+  const openEmail = (email) => email && safeOpenHref(`mailto:${email}`);
   const openFaceTime = (phoneOrEmail) => phoneOrEmail && safeOpenHref(`facetime:${phoneOrEmail}`);
 
   const goOwnerMessages = (contact) => {
@@ -441,7 +443,7 @@ export default function OwnerContactsPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name or phone"
+          placeholder="Search name, phone, or email"
           style={styles.searchInput}
         />
         {search ? (
@@ -483,6 +485,7 @@ export default function OwnerContactsPage() {
             const initials = getInitials(c.firstName, c.lastName);
             const displayName = `${c.firstName || ""} ${c.lastName || ""}`.trim() || "(No name)";
             const phone = String(c.phone || "").trim();
+            const email = String(c.email || "").trim();
             const previewNote = c.note && c.note.length > 40 ? c.note.slice(0, 40) + "…" : c.note || "";
 
             const rawSelfieUrl = String(c.selfieUrl || "").trim();
@@ -532,6 +535,11 @@ export default function OwnerContactsPage() {
                         {phone}
                       </div>
                     ) : null}
+                    {email ? (
+                      <div style={styles.cardEmail} title={email}>
+                        {email}
+                      </div>
+                    ) : null}
                     {previewNote ? (
                       <div style={styles.cardNote} title={c.note || ""}>
                         {previewNote}
@@ -568,12 +576,18 @@ export default function OwnerContactsPage() {
                         </button>
                       ) : null}
 
+                      {email ? (
+                        <button style={styles.actionBtn} onClick={() => openEmail(email)} disabled={isDeleting}>
+                          ✉️ Email
+                        </button>
+                      ) : null}
+
                       <button style={styles.actionBtn} onClick={() => goOwnerMessages(c)} disabled={isDeleting}>
                         🧠 Chat
                       </button>
 
-                      {isLikelyAppleDevice() && phone ? (
-                        <button style={styles.actionBtn} onClick={() => openFaceTime(phone)} disabled={isDeleting}>
+                      {isLikelyAppleDevice() && (email || phone) ? (
+                        <button style={styles.actionBtn} onClick={() => openFaceTime(email || phone)} disabled={isDeleting}>
                           🎥 FaceTime
                         </button>
                       ) : null}
@@ -592,10 +606,10 @@ export default function OwnerContactsPage() {
                       </button>
                     </div>
 
-                    {c.address ? (
+                    {email ? (
                       <div style={{ marginTop: 10 }}>
-                        <div style={styles.expandedLabel}>Address</div>
-                        <div style={styles.expandedValue}>{c.address}</div>
+                        <div style={styles.expandedLabel}>Email</div>
+                        <div style={styles.expandedValue}>{email}</div>
                       </div>
                     ) : null}
 
@@ -790,6 +804,7 @@ const styles = {
     whiteSpace: "nowrap",
   },
   cardPhone: { color: "#cfd3dc", fontSize: 13, marginTop: 2 },
+  cardEmail: { color: "#cfd3dc", fontSize: 13, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   cardNote: { color: "#9ea4b5", fontSize: 11, marginTop: 2 },
   hasSelfieTag: { color: "#7dd3fc", fontSize: 11, marginTop: 6, fontWeight: 900 },
 
