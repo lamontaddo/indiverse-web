@@ -44,6 +44,32 @@ function fallbackEmojiForSale(type) {
   return "🎵";
 }
 
+function pickNumber(...values) {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num)) return num;
+  }
+  return 0;
+}
+
+function normalizeSale(sale = {}) {
+  return {
+    ...sale,
+    _id: sale._id || sale.id || `${sale.type || "sale"}-${sale.createdAt || Math.random()}`,
+    amount: pickNumber(
+      sale.amount,
+      sale.netAmount,
+      sale.ownerNet,
+      sale.netEarnings,
+      sale.totalAmount,
+      sale.price
+    ),
+    paymentProvider: String(sale.paymentProvider || sale.provider || "paypal").toLowerCase(),
+    paymentStatus: String(sale.paymentStatus || sale.status || "paid").toLowerCase(),
+    payoutStatus: String(sale.payoutStatus || "pending").toLowerCase(),
+  };
+}
+
 export default function OwnerEarningsPage() {
   const navigate = useNavigate();
   const params = useParams();
@@ -67,6 +93,11 @@ export default function OwnerEarningsPage() {
     totalRevenue: 0,
     totalSales: 0,
     netEarnings: 0,
+    pendingPayout: 0,
+    paidOut: 0,
+    paypalEmail: "",
+    paypalPayoutEmail: "",
+    payoutReady: false,
     recentSales: [],
   });
 
@@ -82,11 +113,25 @@ export default function OwnerEarningsPage() {
         profileKey,
       });
 
+      const rawSummary = data?.summary || data || {};
+      const recentSales = Array.isArray(rawSummary?.recentSales)
+        ? rawSummary.recentSales.map(normalizeSale)
+        : [];
+
+      const paypalEmail = String(rawSummary?.paypalEmail || "").trim();
+      const paypalPayoutEmail = String(rawSummary?.paypalPayoutEmail || "").trim();
+      const payoutEmail = paypalPayoutEmail || paypalEmail;
+
       setSummary({
-        totalRevenue: Number(data?.summary?.totalRevenue || 0),
-        totalSales: Number(data?.summary?.totalSales || 0),
-        netEarnings: Number(data?.summary?.netEarnings || 0),
-        recentSales: Array.isArray(data?.summary?.recentSales) ? data.summary.recentSales : [],
+        totalRevenue: pickNumber(rawSummary?.totalRevenue, rawSummary?.grossRevenue, rawSummary?.grossEarnings),
+        totalSales: pickNumber(rawSummary?.totalSales, rawSummary?.salesCount, recentSales.length),
+        netEarnings: pickNumber(rawSummary?.netEarnings, rawSummary?.ownerNet, rawSummary?.availableBalance),
+        pendingPayout: pickNumber(rawSummary?.pendingPayout, rawSummary?.pendingBalance, rawSummary?.unpaidEarnings),
+        paidOut: pickNumber(rawSummary?.paidOut, rawSummary?.paidOutAmount, rawSummary?.totalPaidOut),
+        paypalEmail,
+        paypalPayoutEmail,
+        payoutReady: Boolean(rawSummary?.payoutReady ?? rawSummary?.canReceivePayouts ?? payoutEmail),
+        recentSales,
       });
     } catch (err) {
       setError(err?.message || "Unable to load earnings");
@@ -98,6 +143,8 @@ export default function OwnerEarningsPage() {
   useEffect(() => {
     loadSummary();
   }, [profileKey]);
+
+  const payoutEmail = summary.paypalPayoutEmail || summary.paypalEmail;
 
   const goBackHome = () => {
     if (!profileKey) return navigate("/", { replace: false });
@@ -147,28 +194,54 @@ export default function OwnerEarningsPage() {
         </div>
       ) : null}
 
-<div style={styles.cardsRow}>
-  <div className="oe-card">
-    <div className="oe-cardLabel">Total Revenue</div>
-    <div className="oe-cardValue">
-      {loading ? "—" : formatMoney(summary.totalRevenue)}
-    </div>
-  </div>
+      <div style={styles.cardsRow}>
+        <div className="oe-card">
+          <div className="oe-cardLabel">Total Revenue</div>
+          <div className="oe-cardValue">
+            {loading ? "—" : formatMoney(summary.totalRevenue)}
+          </div>
+        </div>
 
-  <div className="oe-card">
-    <div className="oe-cardLabel">Net Earnings</div>
-    <div className="oe-cardValue">
-      {loading ? "—" : formatMoney(summary.netEarnings)}
-    </div>
-  </div>
+        <div className="oe-card">
+          <div className="oe-cardLabel">Net Earnings</div>
+          <div className="oe-cardValue">
+            {loading ? "—" : formatMoney(summary.netEarnings)}
+          </div>
+        </div>
 
-  <div className="oe-card">
-    <div className="oe-cardLabel">Total Sales</div>
-    <div className="oe-cardValue">
-      {loading ? "—" : summary.totalSales}
-    </div>
-  </div>
-</div>
+        <div className="oe-card">
+          <div className="oe-cardLabel">Pending Payout</div>
+          <div className="oe-cardValue">
+            {loading ? "—" : formatMoney(summary.pendingPayout || summary.netEarnings)}
+          </div>
+        </div>
+
+        <div className="oe-card">
+          <div className="oe-cardLabel">Paid Out</div>
+          <div className="oe-cardValue">
+            {loading ? "—" : formatMoney(summary.paidOut)}
+          </div>
+        </div>
+
+        <div className="oe-card">
+          <div className="oe-cardLabel">Total Sales</div>
+          <div className="oe-cardValue">
+            {loading ? "—" : summary.totalSales}
+          </div>
+        </div>
+
+        <div className="oe-card">
+          <div className="oe-cardLabel">PayPal Payout</div>
+          <div className="oe-cardValue oe-cardValueSmall">
+            {loading ? "—" : payoutEmail || "Not set"}
+          </div>
+          {!loading ? (
+            <div className={summary.payoutReady ? "oe-statusGood" : "oe-statusWarn"}>
+              {summary.payoutReady ? "Ready for payouts" : "Add PayPal email on Payment Info"}
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       <div className="oe-panel">
         <div style={styles.panelHeader}>
@@ -202,6 +275,9 @@ export default function OwnerEarningsPage() {
                   <div style={styles.saleTitle}>{sale.title || "Untitled"}</div>
                   <div style={styles.saleMeta}>
                     {(sale.typeLabel || "Sale")} • {(sale.subtitle || "—")} • {formatDate(sale.createdAt)}
+                  </div>
+                  <div style={styles.saleMetaTiny}>
+                    {sale.paymentProvider.toUpperCase()} • {sale.paymentStatus || "paid"} • payout {sale.payoutStatus || "pending"}
                   </div>
                 </div>
 
@@ -402,6 +478,13 @@ const styles = {
     fontSize: 12,
     color: "#94a3b8",
   },
+  saleMetaTiny: {
+    marginTop: 5,
+    fontSize: 11,
+    color: "rgba(148,163,184,0.72)",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   saleAmount: {
     flexShrink: 0,
     fontSize: 15,
@@ -487,6 +570,30 @@ function css(accent) {
     word-break: break-word;
   }
 
+  .oe-cardValueSmall{
+    font-size: 18px;
+    line-height: 1.35;
+  }
+
+  .oe-statusGood,
+  .oe-statusWarn{
+    position: relative;
+    z-index: 1;
+    margin-top: 12px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+  }
+
+  .oe-statusGood{
+    color: #86efac;
+  }
+
+  .oe-statusWarn{
+    color: #fbbf24;
+  }
+
   .oe-panel{
     position: relative;
     z-index: 2;
@@ -511,6 +618,10 @@ function css(accent) {
   @media (max-width: 640px){
     .oe-cardValue{
       font-size: 28px;
+    }
+
+    .oe-cardValueSmall{
+      font-size: 16px;
     }
 
     .oe-saleRow{
