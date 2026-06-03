@@ -267,24 +267,28 @@ export default function OwnerPaidVideosPage() {
     async (file) => {
       if (!profileKey) return alert("Missing profileKey");
       if (!file) return;
+  
+      console.log("video size MB:", file.size / 1024 / 1024);
+      console.log("video type:", file.type);
+  
       if (uploadingVideo || uploadingPreview || uploadingThumb || saving) return;
-
+  
       try {
         setUploadingVideo(true);
-
+  
         const filename = file.name || `video-${Date.now()}.mp4`;
         const contentType = file.type || guessVideoContentTypeFromName(filename);
-
+  
         const signed = await signUpload({ filename, contentType, kind: "video" });
         const putUrl = signed?.putUrl;
         const key = signed?.key;
-
+  
         if (!putUrl || !key) throw new Error("Upload signer did not return putUrl/key.");
-
+  
         await uploadFileToPutUrl({ putUrl, file, contentType });
-
+  
         setForm((s) => ({ ...s, sourceType: "s3", s3KeyFull: key }));
-
+  
         alert("Full video uploaded. Now upload a preview clip (10–20s), then hit Save.");
       } catch (e) {
         alert(e?.message || "Upload failed");
@@ -522,68 +526,68 @@ export default function OwnerPaidVideosPage() {
                   String(v.sourceType || "s3").toLowerCase() !== "link" &&
                   String(v.access || "free").toLowerCase() === "paid";
 
-                return (
-                  <button key={v._id} style={S.cardBtn} onClick={() => openEdit(v)}>
-                    <div style={S.card}>
-                      <div style={S.thumbWrap}>
-                        {thumb ? (
-                          <img src={thumb} alt="" style={S.thumb} />
-                        ) : (
-                          <div style={{ ...S.thumb, ...S.thumbFallback }}>🎬</div>
-                        )}
-                        {isPaid && <div style={S.lockPill}>PAID</div>}
-                        {!v.isPublished && <div style={S.draftPill}>DRAFT</div>}
-                      </div>
-
-                      <div style={S.cardBody}>
-                        <div style={S.titleRow}>
-                          <div style={S.title} title={v.title || "Untitled"}>
-                            {v.title || "Untitled"}
+                  return (
+                    <div key={v._id} style={S.cardBtn} onClick={() => openEdit(v)} role="button" tabIndex={0}>
+                      <div style={S.card}>
+                        <div style={S.thumbWrap}>
+                          {thumb ? (
+                            <img src={thumb} alt="" style={S.thumb} />
+                          ) : (
+                            <div style={{ ...S.thumb, ...S.thumbFallback }}>🎬</div>
+                          )}
+                          {isPaid && <div style={S.lockPill}>PAID</div>}
+                          {!v.isPublished && <div style={S.draftPill}>DRAFT</div>}
+                        </div>
+                  
+                        <div style={S.cardBody}>
+                          <div style={S.titleRow}>
+                            <div style={S.title} title={v.title || "Untitled"}>
+                              {v.title || "Untitled"}
+                            </div>
                           </div>
-                        </div>
-
-                        <div style={S.sub} title={v.description || badgeText(v)}>
-                          {v.description || badgeText(v)}
-                        </div>
-
-                        <div style={S.row}>
-                          <button
-                            type="button"
-                            style={{ ...S.pill, ...(v.isPublished ? S.pillOn : S.pillOff) }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePublish(v);
-                            }}
-                          >
-                            {v.isPublished ? "Unpublish" : "Publish"}
-                          </button>
-
-                          <button
-                            type="button"
-                            style={S.pill}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEdit(v);
-                            }}
-                          >
-                            Edit
-                          </button>
-
-                          <button
-                            type="button"
-                            style={{ ...S.pill, ...S.pillDanger }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDelete(v);
-                            }}
-                          >
-                            Delete
-                          </button>
+                  
+                          <div style={S.sub} title={v.description || badgeText(v)}>
+                            {v.description || badgeText(v)}
+                          </div>
+                  
+                          <div style={S.row}>
+                            <button
+                              type="button"
+                              style={{ ...S.pill, ...(v.isPublished ? S.pillOn : S.pillOff) }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePublish(v);
+                              }}
+                            >
+                              {v.isPublished ? "Unpublish" : "Publish"}
+                            </button>
+                  
+                            <button
+                              type="button"
+                              style={S.pill}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEdit(v);
+                              }}
+                            >
+                              Edit
+                            </button>
+                  
+                            <button
+                              type="button"
+                              style={{ ...S.pill, ...S.pillDanger }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDelete(v);
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </button>
-                );
+                  );
               })}
             </div>
           )}

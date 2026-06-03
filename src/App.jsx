@@ -69,6 +69,7 @@ import PaidVideoPlayerPage from "./pages/PaidVideoPlayerPage.jsx";
 import OwnerPaidVideosPage from "./pages/OwnerPaidVideosPage.jsx";
 import OwnerEarningsPage from "./pages/OwnerEarningsPage.jsx";
 
+import AdminWithdrawalsPage from "./pages/AdminWithdrawalsPage.jsx";
 
 // ✅ Temporary stubs
 function Stub({ name }) {
@@ -165,7 +166,7 @@ export default function App() {
       <BootGate>
         <Routes>
           <Route path="/" element={<UniverseHome />} />
-
+          <Route path="/admin/withdrawals" element={<AdminWithdrawalsPage />} />
           <Route path="/vaultgate" element={<Stub name="VaultGate" />} />
 
           <Route path="/checkout/success" element={<CheckoutReturnPage />} />

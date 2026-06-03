@@ -57,6 +57,7 @@ function ionToEmoji(name = "", tile = null) {
   if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
   if (key === "flowerorders" || to.includes("consultation") || to.includes("flowerorders") || label.includes("flower")) return "🌹";
   if (key === "stripepayouts") return "💳";
+  if (key === "withdraw" || to.includes("withdraw") || label.includes("withdraw")) return "🏦";
   if (key === "earnings" || to.includes("earnings") || label.includes("earning")) return "💸";
 
   if (k.includes("person")) return "👤";
@@ -84,6 +85,15 @@ function hexToRgba(hex, a = 1) {
   const g = parseInt(full.slice(2, 4), 16);
   const b = parseInt(full.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${a})`;
+}
+
+function formatMoney(value) {
+  const num = Number(value || 0);
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(num);
 }
 
 export default function OwnerHomePage() {
@@ -118,6 +128,17 @@ export default function OwnerHomePage() {
   const [paypalModalOpen, setPaypalModalOpen] = useState(false);
   const [paypalEmail, setPaypalEmail] = useState("");
   const [paypalSaving, setPaypalSaving] = useState(false);
+
+  const [earningsSummary, setEarningsSummary] = useState({
+    loading: true,
+    availableToWithdraw: 0,
+    pendingWithdrawal: 0,
+    paidOut: 0,
+    payoutReady: false,
+    paypalPayoutEmail: "",
+    error: "",
+  });
+  const [withdrawSaving, setWithdrawSaving] = useState(false);
 
   async function loadStripeStatus() {
     if (!profileKey) return;
@@ -155,8 +176,40 @@ export default function OwnerHomePage() {
     }
   }
 
+  async function loadEarningsSummary() {
+    if (!profileKey) return;
+
+    setEarningsSummary((s) => ({ ...s, loading: true, error: "" }));
+
+    try {
+      const data = await ownerJsonWeb("/api/owner/earnings/summary", {
+        method: "GET",
+        profileKey,
+      });
+
+      const summary = data?.summary || {};
+
+      setEarningsSummary({
+        loading: false,
+        availableToWithdraw: Number(summary?.availableToWithdraw ?? summary?.pendingPayout ?? 0),
+        pendingWithdrawal: Number(summary?.pendingWithdrawal || 0),
+        paidOut: Number(summary?.paidOut || 0),
+        payoutReady: Boolean(summary?.payoutReady),
+        paypalPayoutEmail: String(summary?.paypalPayoutEmail || summary?.paypalEmail || ""),
+        error: "",
+      });
+    } catch (err) {
+      setEarningsSummary((s) => ({
+        ...s,
+        loading: false,
+        error: err?.message || "Unable to load earnings summary",
+      }));
+    }
+  }
+
   useEffect(() => {
     loadStripeStatus();
+    loadEarningsSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileKey]);
 
@@ -180,15 +233,26 @@ export default function OwnerHomePage() {
     }),
     []
   );
+
+  const withdrawTile = useMemo(
+    () => ({
+      key: "withdraw",
+      label: "Withdraw",
+      ionicon: "wallet",
+      to: "__owner_withdraw__",
+      size: 160,
+    }),
+    []
+  );
   
   const TILES = useMemo(() => {
     const filtered = baseTiles.filter((t) => {
       const key = String(t.key || "").toLowerCase();
-      return key !== "stripepayouts" && key !== "earnings";
+      return key !== "stripepayouts" && key !== "earnings" && key !== "withdraw";
     });
   
-    return [stripeTile, earningsTile, ...filtered];
-  }, [baseTiles, stripeTile, earningsTile]);
+    return [stripeTile, earningsTile, withdrawTile, ...filtered];
+  }, [baseTiles, stripeTile, earningsTile, withdrawTile]);
 
   const phases = useMemo(
     () =>
@@ -272,10 +336,57 @@ export default function OwnerHomePage() {
 
       window.alert("PayPal payment info saved.");
       setPaypalModalOpen(false);
+      await loadEarningsSummary();
     } catch (err) {
       window.alert(err?.message || "Unable to save PayPal payment info.");
     } finally {
       setPaypalSaving(false);
+    }
+  }
+
+  async function handleRequestWithdrawal() {
+    if (!profileKey || withdrawSaving) return;
+
+    if (!earningsSummary.payoutReady) {
+      window.alert("Add your PayPal payout email before requesting a withdrawal.");
+      setPaypalModalOpen(true);
+      return;
+    }
+
+    if (Number(earningsSummary.availableToWithdraw || 0) <= 0) {
+      if (Number(earningsSummary.pendingWithdrawal || 0) > 0) {
+        window.alert(`You already have a withdrawal request pending for ${formatMoney(earningsSummary.pendingWithdrawal)}.`);
+      } else {
+        window.alert("No earnings are currently available to withdraw.");
+      }
+      return;
+    }
+
+    const ok = window.confirm(
+      `Request withdrawal of ${formatMoney(earningsSummary.availableToWithdraw)} to ${earningsSummary.paypalPayoutEmail || "your PayPal email"}?`
+    );
+
+    if (!ok) return;
+
+    try {
+      setWithdrawSaving(true);
+
+      const data = await ownerJsonWeb("/api/owner/withdrawals/request", {
+        method: "POST",
+        profileKey,
+        body: JSON.stringify({}),
+      });
+
+      window.alert(
+        `Withdrawal requested: ${formatMoney(data?.summary?.requestedAmount || earningsSummary.availableToWithdraw)}. Admin will process it.`
+      );
+
+      await loadEarningsSummary();
+    } catch (err) {
+      window.alert(err?.message || "Unable to request withdrawal.");
+      await loadEarningsSummary();
+    } finally {
+      setWithdrawSaving(false);
     }
   }
 
@@ -286,6 +397,11 @@ export default function OwnerHomePage() {
 
     if (raw === "__paypal_payment_info__" || raw === "__stripe_payouts__") {
       setPaypalModalOpen(true);
+      return;
+    }
+
+    if (raw === "__owner_withdraw__") {
+      await handleRequestWithdrawal();
       return;
     }
 
@@ -306,7 +422,15 @@ export default function OwnerHomePage() {
     navigate(`/world/${encodeURIComponent(profileKey)}`, { state: { profileKey, bgUrl } });
   };
 
-  const stripeHint = "Add your PayPal email so admin can send payouts.";
+  const stripeHint = earningsSummary.loading
+    ? "Loading payout status..."
+    : earningsSummary.pendingWithdrawal > 0
+      ? `Withdrawal requested: ${formatMoney(earningsSummary.pendingWithdrawal)} pending admin processing.`
+      : earningsSummary.availableToWithdraw > 0
+        ? `Available to withdraw: ${formatMoney(earningsSummary.availableToWithdraw)}.`
+        : earningsSummary.paidOut > 0
+          ? `Paid out: ${formatMoney(earningsSummary.paidOut)}.`
+          : "Add your PayPal email so admin can send payouts.";
 
   return (
     <div style={styles.page}>
@@ -341,6 +465,7 @@ export default function OwnerHomePage() {
         <div style={styles.stripeBar}>
           <span style={styles.stripeBarLabel}>PayPal Payouts:</span>
           <span style={styles.stripeBarValue}>{stripeHint}</span>
+          {!!earningsSummary.error ? <span style={styles.stripeBarError}>• {earningsSummary.error}</span> : null}
           {!!stripeStatus.error ? <span style={styles.stripeBarError}>• {stripeStatus.error}</span> : null}
         </div>
       ) : null}
@@ -352,13 +477,15 @@ export default function OwnerHomePage() {
             className="oh-tile"
             style={{ width: t.size, height: t.size, transform: tileTransform(idx) }}
             onClick={() => handleTilePress(t)}
-            disabled={!profileKey}
+            disabled={!profileKey || (t.key === "withdraw" && (withdrawSaving || earningsSummary.loading))}
             aria-label={t.label}
             title={t.label}
           >
             <div className="oh-tileInner">
               <div className="oh-icon">{ionToEmoji(t.ionicon, t)}</div>
-              <div className="oh-label">{t.label}</div>
+              <div className="oh-label">
+                {t.key === "withdraw" && withdrawSaving ? "Requesting…" : t.label}
+              </div>
             </div>
           </button>
         ))}
