@@ -413,7 +413,7 @@ export default function PlaylistPage() {
           z-index: 2;
           max-width: 1180px;
           margin: 0 auto;
-          padding: 28px 22px 28px;
+          padding: max(28px, env(safe-area-inset-top)) 22px 28px;
         }
 
         /* header */
@@ -430,7 +430,7 @@ export default function PlaylistPage() {
           opacity: 0.78;
         }
         .pl-titleBig{
-          font-size: 44px;
+          font-size: clamp(34px, 8vw, 44px);
           font-weight: 950;
           letter-spacing: 0.4px;
           line-height: 1.04;
@@ -503,7 +503,7 @@ export default function PlaylistPage() {
           margin-top: 18px;
           display:flex;
           gap: 14px;
-          align-items:center;
+          align-items:stretch;
           justify-content: space-between;
           flex-wrap: wrap;
         }
@@ -590,7 +590,7 @@ export default function PlaylistPage() {
           -webkit-backdrop-filter: blur(12px);
           box-shadow: 0 18px 48px rgba(0,0,0,0.42);
           overflow:hidden;
-          min-height: 118px;
+          min-height: 112px;
           display:flex;
           align-items:center;
           padding: 14px;
@@ -719,8 +719,231 @@ export default function PlaylistPage() {
         }
 
         @media (max-width: 980px){
-          .pl-titleBig{ font-size: 36px; }
           .pl-card{ grid-column: span 12; }
+        }
+
+        @media (max-width: 640px){
+          .pl-root{
+            min-height: 100dvh;
+            overflow-x: hidden;
+            overflow-y: auto;
+          }
+
+          .pl-bg{
+            background-position: center top;
+          }
+
+          .pl-dim{
+            background:
+              linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.72) 46%, rgba(0,0,0,0.94));
+          }
+
+          .pl-shell{
+            width: 100%;
+            max-width: none;
+            box-sizing: border-box;
+            padding: calc(env(safe-area-inset-top) + 28px) 16px 28px;
+          }
+
+          .pl-topRow{
+            display:grid;
+            grid-template-columns: 1fr auto;
+            align-items:start;
+            gap: 12px;
+          }
+
+          .pl-titleBig{
+            font-size: 38px;
+            line-height: .96;
+            letter-spacing: -0.8px;
+            margin-top: 0;
+          }
+
+          .pl-subline{
+            margin-top: 10px;
+            font-size: 14px;
+          }
+
+          .pl-footnote{
+            margin-top: 12px;
+            max-width: 220px;
+            line-height: 1.55;
+            font-size: 12px;
+          }
+
+          .pl-actions{
+            padding-top: 0;
+            gap: 8px;
+            flex-wrap: nowrap;
+          }
+
+          .pl-pill{
+            width: 68px;
+            height: 48px;
+            padding: 0 8px;
+            justify-content:center;
+            text-align:center;
+            line-height: 1.05;
+            white-space: normal;
+            font-size: 12px;
+          }
+
+          .pl-iconBtn{
+            width: 48px;
+            height: 48px;
+            flex: 0 0 auto;
+          }
+
+          .pl-controls{
+            margin-top: 26px;
+            flex-direction: column;
+            gap: 14px;
+          }
+
+          .pl-search{
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+            height: 74px;
+            border-radius: 24px;
+            padding: 0 18px;
+          }
+
+          .pl-searchInput{
+            font-size: 16px;
+            font-weight: 800;
+          }
+
+          .pl-sortWrap{
+            width: max-content;
+            max-width: 100%;
+            height: 52px;
+            box-sizing: border-box;
+            border-radius: 20px;
+            padding: 7px 12px;
+          }
+
+          .pl-select{
+            height: 38px;
+            font-size: 14px;
+            border-radius: 16px;
+          }
+
+          .pl-grid{
+            margin-top: 26px;
+            gap: 14px;
+          }
+
+          .pl-card{
+            min-height: 104px;
+            border-radius: 24px;
+            padding: 14px;
+            gap: 12px;
+            align-items:center;
+          }
+
+          .pl-cover{
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+          }
+
+          .pl-title{
+            font-size: 17px;
+            white-space: normal;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+          }
+
+          .pl-sub{
+            font-size: 13px;
+          }
+
+          .pl-tag{
+            height: 26px;
+            font-size: 12px;
+            margin-top: 9px;
+          }
+
+          .pl-openBtn{
+            height: 44px;
+            padding: 0 12px;
+            border-radius: 17px;
+            font-size: 14px;
+          }
+        }
+
+        @media (max-width: 430px){
+          .pl-shell{
+            padding-left: 14px;
+            padding-right: 14px;
+          }
+
+          .pl-titleBig{
+            font-size: 34px;
+          }
+
+          .pl-actions{
+            gap: 6px;
+          }
+
+          .pl-pill{
+            width: 58px;
+            height: 44px;
+            font-size: 11px;
+          }
+
+          .pl-iconBtn{
+            width: 44px;
+            height: 44px;
+          }
+
+          .pl-search{
+            height: 68px;
+            border-radius: 22px;
+          }
+
+          .pl-card{
+            border-radius: 22px;
+            padding: 12px;
+          }
+
+          .pl-cover{
+            width: 58px;
+            height: 58px;
+          }
+
+          .pl-title{
+            font-size: 16px;
+          }
+
+          .pl-openBtn{
+            height: 40px;
+            padding: 0 10px;
+            font-size: 13px;
+          }
+        }
+
+        @media (max-width: 370px){
+          .pl-topRow{
+            grid-template-columns: 1fr;
+          }
+
+          .pl-actions{
+            justify-content:flex-start;
+          }
+
+          .pl-card{
+            display:grid;
+            grid-template-columns: 58px 1fr;
+          }
+
+          .pl-openBtn{
+            grid-column: 1 / -1;
+            width: 100%;
+            justify-content:center;
+          }
         }
 
         @media (prefers-reduced-motion: reduce){
