@@ -267,17 +267,6 @@ export default function PlaylistPage() {
                 <span className="pl-dot">{ownerName}</span>
               </div>
               {errorNote ? <div className="pl-error">Note: {errorNote}</div> : null}
-              {lastUpdated ? (
-                <div className="pl-footnote">
-                  Updated: <code>{lastUpdated}</code>
-                  {loadedFrom ? (
-                    <>
-                      {' '}
-                      • source: <code>{loadedFrom}</code>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -704,19 +693,6 @@ export default function PlaylistPage() {
           letter-spacing: 0.3px;
         }
 
-        .pl-footnote{
-          margin-top: 14px;
-          color: rgba(255,255,255,0.62);
-          font-size: 12px;
-          letter-spacing: 0.2px;
-        }
-        .pl-footnote code{
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.12);
-          padding: 2px 6px;
-          border-radius: 8px;
-          color: rgba(255,255,255,0.85);
-        }
 
         @media (max-width: 980px){
           .pl-card{ grid-column: span 12; }
@@ -764,12 +740,6 @@ export default function PlaylistPage() {
             font-size: 14px;
           }
 
-          .pl-footnote{
-            margin-top: 12px;
-            max-width: 220px;
-            line-height: 1.55;
-            font-size: 12px;
-          }
 
           .pl-actions{
             padding-top: 0;
