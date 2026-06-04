@@ -951,7 +951,8 @@ export default function MusicPage() {
           padding: 22px 22px 140px;
         }
         .ms-narrow{
-          max-width: 980px;
+          width: min(860px, 100%);
+          max-width: 860px;
           margin: 0 auto;
         }
         .ms-top{
@@ -1070,12 +1071,12 @@ export default function MusicPage() {
         }
 
         .ms-albums{
-          display:grid;
-          grid-template-columns: repeat(12, 1fr);
+          display:flex;
+          flex-direction: column;
           gap: 12px;
         }
         .ms-albumCard{
-          grid-column: span 6;
+          width: 100%;
           border-radius: 18px;
           border: 1px solid var(--stroke);
           background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.035));
@@ -1093,8 +1094,9 @@ export default function MusicPage() {
         }
         .ms-albumCardSelected{ border-color: rgba(0,255,255,0.55); }
         .ms-albumArt{
-          width: 82px; height: 82px;
-          border-radius: 16px;
+          width: 58px;
+          height: 58px;
+          border-radius: 15px;
           overflow:hidden;
           border: 1px solid rgba(255,255,255,0.16);
           background: rgba(0,0,0,0.25);
@@ -1109,7 +1111,12 @@ export default function MusicPage() {
           font-size: 18px;
         }
         .ms-albumInfo{ flex:1; min-width:0; }
-        .ms-albumTop{ display:flex; align-items:center; justify-content: space-between; gap: 12px; }
+        .ms-albumTop{
+          display:flex;
+          align-items:center;
+          justify-content: space-between;
+          gap: 12px;
+        }
         .ms-albumTitle{
           font-weight: 950;
           font-size: 14px;
@@ -1163,6 +1170,7 @@ export default function MusicPage() {
           display:flex;
           flex-direction: column;
           gap: 12px;
+          width: 100%;
         }
         .ms-trackRow{
           border-radius: 18px;
@@ -1356,7 +1364,6 @@ export default function MusicPage() {
         .ms-noteStrong{ color: rgba(255,255,255,0.88); font-weight: 950; }
 
         @media (max-width: 980px){
-          .ms-albumCard{ grid-column: span 12; }
           .ms-trackActions{ min-width: 170px; }
           .ms-trackTitle, .ms-trackSub{ max-width: 46vw; }
         }
