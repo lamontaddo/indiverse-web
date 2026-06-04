@@ -145,8 +145,7 @@ export default function PlaylistPage() {
   const [tracks, setTracks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorNote, setErrorNote] = useState('');
-  const [loadedFrom, setLoadedFrom] = useState('');
-  const [lastUpdated, setLastUpdated] = useState('');
+  const [, setLoadedFrom] = useState('');
 
   const [query, setQuery] = useState('');
   const [sortMode, setSortMode] = useState('recent'); // recent | oldest | az | za
@@ -194,7 +193,6 @@ export default function PlaylistPage() {
         if (!mountedRef.current) return;
 
         setTracks(list);
-        setLastUpdated(new Date().toLocaleString());
         console.log('[PlaylistPage] fetched', { reason, profileKey, count: list.length });
       } catch (e) {
         if (!mountedRef.current) return;
@@ -373,7 +371,7 @@ export default function PlaylistPage() {
           background:#000;
           color:#fff;
           position:relative;
-          overflow:hidden;
+          overflow:auto;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         }
 
@@ -381,7 +379,7 @@ export default function PlaylistPage() {
           position: fixed;
           inset: 0;
           background-size: cover;
-          background-position: center;
+          background-position: center top;
           background-repeat: no-repeat;
           transform: translateZ(0);
           z-index: 0;
@@ -392,17 +390,17 @@ export default function PlaylistPage() {
           inset: 0;
           z-index: 1;
           background:
-            radial-gradient(900px 600px at 30% 10%, rgba(255,255,255,0.10), rgba(0,0,0,0) 55%),
-            radial-gradient(900px 600px at 80% 0%, rgba(255,255,255,0.06), rgba(0,0,0,0) 60%),
-            linear-gradient(to bottom, rgba(0,0,0,0.35), rgba(0,0,0,0.86));
+            radial-gradient(720px 460px at 38% 8%, rgba(255,255,255,0.09), rgba(0,0,0,0) 58%),
+            linear-gradient(to bottom, rgba(0,0,0,0.30), rgba(0,0,0,0.78));
         }
 
         .pl-shell{
           position: relative;
           z-index: 2;
-          max-width: 1180px;
+          width: min(760px, calc(100% - 44px));
+          max-width: 760px;
           margin: 0 auto;
-          padding: max(28px, env(safe-area-inset-top)) 22px 28px;
+          padding: max(34px, env(safe-area-inset-top)) 0 34px;
         }
 
         /* header */
@@ -410,7 +408,8 @@ export default function PlaylistPage() {
           display:flex;
           align-items:flex-start;
           justify-content: space-between;
-          gap: 16px;
+          gap: 14px;
+          width: 100%;
         }
         .pl-kicker{
           font-size: 12px;
@@ -419,16 +418,16 @@ export default function PlaylistPage() {
           opacity: 0.78;
         }
         .pl-titleBig{
-          font-size: clamp(34px, 8vw, 44px);
+          font-size: clamp(34px, 5vw, 48px);
           font-weight: 950;
-          letter-spacing: 0.4px;
-          line-height: 1.04;
-          margin-top: 6px;
+          letter-spacing: 0.1px;
+          line-height: .96;
+          margin-top: 0;
           text-shadow: 0 24px 60px rgba(0,0,0,0.45);
         }
         .pl-subline{
-          margin-top: 10px;
-          color: rgba(255,255,255,0.72);
+          margin-top: 8px;
+          color: rgba(255,255,255,0.74);
           font-size: 13px;
           letter-spacing: 0.5px;
           display:flex;
@@ -448,29 +447,29 @@ export default function PlaylistPage() {
         .pl-actions{
           display:flex;
           align-items:center;
-          gap:10px;
-          padding-top: 6px;
+          gap:8px;
+          padding-top: 2px;
         }
         .pl-pill{
-          height: 34px;
-          padding: 0 10px;
+          height: 32px;
+          padding: 0 11px;
           border-radius: 999px;
           border: 1px solid var(--stroke);
-          background: rgba(0,0,0,0.35);
+          background: rgba(0,0,0,0.34);
           color: #fff;
           display:flex;
           align-items:center;
           gap:8px;
           font-weight: 900;
-          letter-spacing: .6px;
-          font-size: 12px;
+          letter-spacing: .4px;
+          font-size: 11px;
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
-          box-shadow: 0 10px 26px rgba(0,0,0,0.32);
+          box-shadow: 0 10px 26px rgba(0,0,0,0.26);
         }
         .pl-iconBtn{
-          width: 34px;
-          height: 34px;
+          width: 32px;
+          height: 32px;
           padding: 0;
           border-radius: 999px;
           border: 1px solid var(--stroke);
@@ -489,28 +488,29 @@ export default function PlaylistPage() {
 
         /* controls */
         .pl-controls{
-          margin-top: 18px;
-          display:flex;
-          gap: 14px;
-          align-items:stretch;
-          justify-content: space-between;
-          flex-wrap: wrap;
+          margin-top: 22px;
+          display:grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items:center;
+          width: 100%;
         }
 
         .pl-search{
-          flex: 1;
-          min-width: 280px;
-          height: 44px;
+          width: 100%;
+          min-width: 0;
+          height: 42px;
+          box-sizing: border-box;
           display:flex;
           align-items:center;
           gap: 10px;
           padding: 0 14px;
-          border-radius: 18px;
+          border-radius: 16px;
           border: 1px solid var(--stroke);
-          background: rgba(0,0,0,0.30);
+          background: rgba(0,0,0,0.32);
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
-          box-shadow: 0 10px 26px rgba(0,0,0,0.28);
+          box-shadow: 0 10px 26px rgba(0,0,0,0.24);
         }
         .pl-searchIcon{
           opacity: 0.75;
@@ -531,16 +531,18 @@ export default function PlaylistPage() {
         }
 
         .pl-sortWrap{
+          height: 42px;
+          box-sizing: border-box;
           display:flex;
           align-items:center;
-          gap:10px;
-          padding: 6px 10px;
-          border-radius: 14px;
+          gap:9px;
+          padding: 5px 8px 5px 10px;
+          border-radius: 16px;
           border: 1px solid var(--stroke);
-          background: rgba(0,0,0,0.35);
+          background: rgba(0,0,0,0.34);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
-          box-shadow: 0 10px 26px rgba(0,0,0,0.32);
+          box-shadow: 0 10px 26px rgba(0,0,0,0.26);
         }
         .pl-sortLabel{
           color: var(--textDim);
@@ -552,6 +554,7 @@ export default function PlaylistPage() {
         .pl-select{
           height: 30px;
           border-radius: 12px;
+          max-width: 128px;
           border: 1px solid rgba(255,255,255,0.14);
           background: rgba(255,255,255,0.06);
           color:#fff;
@@ -564,25 +567,25 @@ export default function PlaylistPage() {
 
         /* grid */
         .pl-grid{
-          margin-top: 16px;
+          margin-top: 14px;
           display:grid;
-          grid-template-columns: repeat(12, 1fr);
-          gap: 14px;
+          grid-template-columns: 1fr;
+          gap: 12px;
           align-items: stretch;
+          width: min(620px, 100%);
         }
         .pl-card{
-          grid-column: span 6;
           border-radius: 18px;
           border: 1px solid var(--stroke);
-          background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.035));
+          background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.035));
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
-          box-shadow: 0 18px 48px rgba(0,0,0,0.42);
+          box-shadow: 0 18px 48px rgba(0,0,0,0.34);
           overflow:hidden;
-          min-height: 112px;
+          min-height: 88px;
           display:flex;
           align-items:center;
-          padding: 14px;
+          padding: 12px;
           gap: 12px;
           transition: transform 140ms ease, border-color 140ms ease;
         }
@@ -592,8 +595,8 @@ export default function PlaylistPage() {
         }
 
         .pl-cover{
-          width: 56px;
-          height: 56px;
+          width: 54px;
+          height: 54px;
           border-radius: 14px;
           overflow:hidden;
           border: 1px solid rgba(255,255,255,0.16);
@@ -625,7 +628,7 @@ export default function PlaylistPage() {
 
         .pl-meta{ flex: 1; min-width: 0; }
         .pl-title{
-          font-size: 16px;
+          font-size: 15px;
           font-weight: 950;
           letter-spacing: .2px;
           line-height: 1.2;
@@ -659,14 +662,14 @@ export default function PlaylistPage() {
         }
 
         .pl-openBtn{
-          height: 32px;
+          height: 34px;
           padding: 0 12px;
-          border-radius: 12px;
+          border-radius: 13px;
           border: 1px solid rgba(34,197,94,0.40);
           background: rgba(0,0,0,0.45);
           color: rgba(34,197,94,0.95);
           font-weight: 950;
-          letter-spacing: .3px;
+          letter-spacing: .2px;
           display:flex;
           align-items:center;
           gap:8px;
@@ -695,7 +698,9 @@ export default function PlaylistPage() {
 
 
         @media (max-width: 980px){
-          .pl-card{ grid-column: span 12; }
+          .pl-shell{
+            width: min(720px, calc(100% - 36px));
+          }
         }
 
         @media (max-width: 640px){
@@ -765,7 +770,8 @@ export default function PlaylistPage() {
           }
 
           .pl-controls{
-            margin-top: 26px;
+            margin-top: 24px;
+            display:flex;
             flex-direction: column;
             gap: 14px;
           }
