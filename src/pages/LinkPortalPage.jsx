@@ -133,15 +133,26 @@ export default function LinkPortalPage() {
     <div style={styles.container}>
       {/* Background */}
       {videoUrl ? (
-        <video
-          ref={videoRef}
-          src={videoUrl}
-          style={styles.video}
-          autoPlay
-          loop
-          playsInline
-          muted={muted}
-        />
+        <>
+          <video
+            src={videoUrl}
+            style={styles.videoBlurBg}
+            autoPlay
+            loop
+            playsInline
+            muted
+            aria-hidden="true"
+          />
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            style={styles.video}
+            autoPlay
+            loop
+            playsInline
+            muted={muted}
+          />
+        </>
       ) : (
         <div style={styles.fallbackBg} />
       )}
@@ -202,13 +213,24 @@ const styles = {
     backgroundColor: '#000',
     overflow: 'hidden',
   },
-  video: {
+  videoBlurBg: {
     position: 'absolute',
     inset: 0,
     width: '100%',
     height: '100%',
     objectFit: 'cover',
-    transform: 'scale(1.02)', // slight cinematic fill
+    transform: 'scale(1.08)',
+    filter: 'blur(18px) saturate(1.08)',
+    opacity: 0.72,
+  },
+  video: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
+    objectPosition: 'center center',
+    backgroundColor: 'transparent',
   },
   fallbackBg: {
     position: 'absolute',
@@ -218,6 +240,7 @@ const styles = {
   overlay: {
     position: 'absolute',
     inset: 0,
+    pointerEvents: 'none',
   },
   closeWrap: {
     position: 'absolute',
