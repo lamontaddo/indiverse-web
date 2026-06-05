@@ -240,6 +240,22 @@ function readBuyerUser() {
   }
 }
 
+function isStandaloneDisplay() {
+  try {
+    return window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true;
+  } catch {
+    return false;
+  }
+}
+
+function isMobileBrowser() {
+  try {
+    return /iphone|ipad|ipod|android/i.test(window.navigator?.userAgent || '');
+  } catch {
+    return false;
+  }
+}
+
 export default function UniverseHome() {
   const navigate = useNavigate();
 
@@ -254,6 +270,8 @@ export default function UniverseHome() {
 
   // ✅ NEW: auth-derived UI state
   const [buyerUser, setBuyerUser] = useState(() => readBuyerUser());
+
+  const [showInstallHint, setShowInstallHint] = useState(false);
 
   const syncRemoteProfiles = useCallback(async ({ force = false } = {}) => {
     try {
@@ -289,6 +307,24 @@ export default function UniverseHome() {
   useEffect(() => {
     syncRemoteProfiles({ force: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileBrowser()) return;
+    if (isStandaloneDisplay()) return;
+  
+    let dismissed = false;
+    try {
+      dismissed = localStorage.getItem('indiverse:addToHomeScreen:dismissed') === 'true';
+    } catch {}
+  
+    if (dismissed) return;
+  
+    const id = setTimeout(() => {
+      setShowInstallHint(true);
+    }, 900);
+  
+    return () => clearTimeout(id);
   }, []);
 
   useEffect(() => {
@@ -344,6 +380,13 @@ export default function UniverseHome() {
     navigate('/account');
   };
 
+  const dismissInstallHint = () => {
+    try {
+      localStorage.setItem('indiverse:addToHomeScreen:dismissed', 'true');
+    } catch {}
+    setShowInstallHint(false);
+  };
+
   const activeRealms = modules.length;
 
   // ✅ NEW: isLoggedIn + initial
@@ -377,6 +420,33 @@ export default function UniverseHome() {
       ) : (
         <div className="bgFallback" />
       )}
+
+      {showInstallHint ? (
+        <div className="installHint" role="dialog" aria-label="Add IndiVerse to Home Screen">
+          <button
+            className="installClose"
+            type="button"
+            onClick={dismissInstallHint}
+            aria-label="Dismiss install instructions"
+          >
+            ✕
+          </button>
+
+          <div className="installIcon">✦</div>
+
+          <div className="installCopy">
+            <div className="installTitle">Add IndiVerse to Home Screen</div>
+            <div className="installSteps">
+              Tap the <strong>menu</strong> or <strong>Share</strong> button → tap{' '}
+              <strong>Add to Home Screen</strong>.
+            </div>
+          </div>
+
+          <button className="installGotIt" type="button" onClick={dismissInstallHint}>
+            Got it
+          </button>
+        </div>
+      ) : null}
 
       <div className="scroll">
         <div className="container">
@@ -485,6 +555,94 @@ export default function UniverseHome() {
           z-index: 0;
           background: #000;
           transform: translateZ(0);
+        }
+
+        .installHint{
+          position: fixed;
+          top: calc(env(safe-area-inset-top) + 14px);
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 20;
+          width: min(440px, calc(100% - 28px));
+          box-sizing: border-box;
+          border-radius: 22px;
+          border: 1px solid rgba(255,255,255,0.18);
+          background: linear-gradient(180deg, rgba(16,16,26,0.94), rgba(0,0,0,0.88));
+          color: #fff;
+          display:flex;
+          align-items:center;
+          gap: 12px;
+          padding: 12px;
+          box-shadow: 0 22px 70px rgba(0,0,0,0.54);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+        }
+
+        .installClose{
+          position:absolute;
+          top: 8px;
+          right: 8px;
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.08);
+          color: #fff;
+          cursor:pointer;
+          display:grid;
+          place-items:center;
+          font-size: 13px;
+        }
+
+        .installIcon{
+          width: 44px;
+          height: 44px;
+          flex: 0 0 auto;
+          border-radius: 15px;
+          display:grid;
+          place-items:center;
+          background: radial-gradient(circle at 30% 20%, #fff, #7c3aed 46%, #111827);
+          box-shadow: 0 14px 34px rgba(124,58,237,0.42);
+          font-weight: 950;
+        }
+
+        .installCopy{
+          flex: 1;
+          min-width: 0;
+          padding-right: 20px;
+          text-align:left;
+        }
+
+        .installTitle{
+          font-size: 14px;
+          font-weight: 950;
+          letter-spacing: -0.1px;
+          line-height: 1.15;
+        }
+
+        .installSteps{
+          margin-top: 4px;
+          color: rgba(255,255,255,0.72);
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .installSteps strong{
+          color: rgba(255,255,255,0.94);
+        }
+
+        .installGotIt{
+          height: 34px;
+          padding: 0 12px;
+          border-radius: 999px;
+          border: none;
+          background: linear-gradient(90deg, #fff, #d8b4fe);
+          color: #050505;
+          font-size: 12px;
+          font-weight: 950;
+          cursor:pointer;
+          flex: 0 0 auto;
+          margin-right: 22px;
         }
 
         .scroll {
@@ -679,6 +837,28 @@ export default function UniverseHome() {
 
         .footer { margin-top: 14px; display: flex; justify-content: center; }
         .footerText { font-size: 11px; color: #6b7280; }
+
+        @media (max-width: 430px){
+          .installHint{
+            align-items:flex-start;
+            gap: 10px;
+            padding: 12px;
+          }
+
+          .installIcon{
+            width: 40px;
+            height: 40px;
+            border-radius: 14px;
+          }
+
+          .installGotIt{
+            display:none;
+          }
+
+          .installCopy{
+            padding-right: 24px;
+          }
+        }
       `}</style>
     </div>
   );
