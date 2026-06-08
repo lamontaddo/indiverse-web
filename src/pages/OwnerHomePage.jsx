@@ -1,9 +1,9 @@
 // src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web)
 // Route: /world/:profileKey/owner/home
 //
-// ✅ Keeps owner payment tile
-// ✅ PayPal payout info modal for owner payment email
-// ✅ Adds Earnings tile
+// ✅ Keeps owner PayPal payout info modal
+// ✅ Moves Payment Info + Withdraw into compact payout tabs
+// ✅ Keeps Earnings as a dashboard tile
 // ✅ Routes Earnings tile to /world/:profileKey/owner/earnings
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -15,17 +15,17 @@ const SPEED = 0.55;
 const AMP_BOOST = 1.1;
 
 const FALLBACK_OWNER_ITEMS = [
-  { key: "earnings", label: "Earnings", ionicon: "cash", to: "ownerearnings", size: 160 },
-  { key: "about", label: "About", ionicon: "person-circle", to: "ownerabout", size: 150 },
-  { key: "contacts", label: "Contacts", ionicon: "people", to: "ownercontacts", size: 160 },
-  { key: "messages", label: "Messages", ionicon: "chatbubbles", to: "ownermessages", size: 150 },
-  { key: "playlist", label: "Playlist", ionicon: "list", to: "ownerplaylist", size: 165 },
-  { key: "music", label: "Music", ionicon: "musical-notes", to: "ownermusic", size: 160 },
-  { key: "flowerorders", label: "Flower Orders", ionicon: "rose", to: "ownerconsultation", size: 160 },
-  { key: "products", label: "Products", ionicon: "cart", to: "ownerproducts", size: 160 },
-  { key: "portfolio", label: "Portfolio", ionicon: "images", to: "ownerportfolio", size: 155 },
-  { key: "fashion", label: "Fashion", ionicon: "shirt", to: "ownerfashion", size: 155 },
-  { key: "videos", label: "Videos", ionicon: "videocam", to: "ownervideos", size: 155 },
+  { key: "earnings", label: "Earnings", ionicon: "cash", to: "ownerearnings", size: 136 },
+  { key: "about", label: "About", ionicon: "person-circle", to: "ownerabout", size: 136 },
+  { key: "contacts", label: "Contacts", ionicon: "people", to: "ownercontacts", size: 136 },
+  { key: "messages", label: "Messages", ionicon: "chatbubbles", to: "ownermessages", size: 136 },
+  { key: "playlist", label: "Playlist", ionicon: "list", to: "ownerplaylist", size: 136 },
+  { key: "music", label: "Music", ionicon: "musical-notes", to: "ownermusic", size: 136 },
+  { key: "flowerorders", label: "Flower Orders", ionicon: "rose", to: "ownerconsultation", size: 136 },
+  { key: "products", label: "Products", ionicon: "cart", to: "ownerproducts", size: 136 },
+  { key: "portfolio", label: "Portfolio", ionicon: "images", to: "ownerportfolio", size: 136 },
+  { key: "fashion", label: "Fashion", ionicon: "shirt", to: "ownerfashion", size: 136 },
+  { key: "videos", label: "Videos", ionicon: "videocam", to: "ownervideos", size: 136 },
 ];
 
 function normalizeProfileKey(pk) {
@@ -43,7 +43,7 @@ function normalizeOwnerItems(profile) {
     label: String(it.label ?? it.key ?? "Item"),
     ionicon: it.ionicon || it.icon || "ellipse",
     to: String(it.to ?? it.key ?? ""),
-    size: Number(it.size ?? 150),
+    size: Math.min(Number(it.size ?? 136), 142),
     params: it.params || null,
   }));
 }
@@ -213,15 +213,6 @@ export default function OwnerHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileKey]);
 
-  const stripeTile = useMemo(() => {
-    return {
-      key: "stripepayouts",
-      label: "Payment Info",
-      ionicon: "card",
-      to: "__paypal_payment_info__",
-      size: 160,
-    };
-  }, []);
 
   const earningsTile = useMemo(
     () => ({
@@ -229,30 +220,19 @@ export default function OwnerHomePage() {
       label: "Earnings",
       ionicon: "cash",
       to: "ownerearnings",
-      size: 160,
+      size: 136,
     }),
     []
   );
 
-  const withdrawTile = useMemo(
-    () => ({
-      key: "withdraw",
-      label: "Withdraw",
-      ionicon: "wallet",
-      to: "__owner_withdraw__",
-      size: 160,
-    }),
-    []
-  );
-  
   const TILES = useMemo(() => {
     const filtered = baseTiles.filter((t) => {
       const key = String(t.key || "").toLowerCase();
       return key !== "stripepayouts" && key !== "earnings" && key !== "withdraw";
     });
-  
-    return [stripeTile, earningsTile, withdrawTile, ...filtered];
-  }, [baseTiles, stripeTile, earningsTile, withdrawTile]);
+
+    return [earningsTile, ...filtered];
+  }, [baseTiles, earningsTile]);
 
   const phases = useMemo(
     () =>
@@ -462,11 +442,27 @@ export default function OwnerHomePage() {
       ) : null}
 
       {profileKey ? (
-        <div style={styles.stripeBar}>
-          <span style={styles.stripeBarLabel}>PayPal Payouts:</span>
-          <span style={styles.stripeBarValue}>{stripeHint}</span>
-          {!!earningsSummary.error ? <span style={styles.stripeBarError}>• {earningsSummary.error}</span> : null}
-          {!!stripeStatus.error ? <span style={styles.stripeBarError}>• {stripeStatus.error}</span> : null}
+        <div style={styles.payoutPanel}>
+          <div style={styles.payoutCopy}>
+            <span style={styles.stripeBarLabel}>PayPal Payouts</span>
+            <span style={styles.stripeBarValue}>{stripeHint}</span>
+            {!!earningsSummary.error ? <span style={styles.stripeBarError}>• {earningsSummary.error}</span> : null}
+            {!!stripeStatus.error ? <span style={styles.stripeBarError}>• {stripeStatus.error}</span> : null}
+          </div>
+
+          <div style={styles.payoutTabs}>
+            <button className="oh-tab" onClick={() => setPaypalModalOpen(true)} disabled={!profileKey}>
+              Payment Info
+            </button>
+
+            <button
+              className="oh-tab oh-tabPrimary"
+              onClick={handleRequestWithdrawal}
+              disabled={!profileKey || withdrawSaving || earningsSummary.loading}
+            >
+              {withdrawSaving ? "Requesting…" : "Withdraw"}
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -477,7 +473,7 @@ export default function OwnerHomePage() {
             className="oh-tile"
             style={{ width: t.size, height: t.size, transform: tileTransform(idx) }}
             onClick={() => handleTilePress(t)}
-            disabled={!profileKey || (t.key === "withdraw" && (withdrawSaving || earningsSummary.loading))}
+            disabled={!profileKey}
             aria-label={t.label}
             title={t.label}
           >
@@ -541,8 +537,10 @@ const styles = {
     minHeight: "100vh",
     background: "linear-gradient(180deg, #020617, #0b1220)",
     color: "#e5e7eb",
-    overflow: "hidden",
+    overflowX: "hidden",
+    overflowY: "auto",
     position: "relative",
+    paddingBottom: 84,
   },
   glowOne: {
     position: "fixed",
@@ -584,19 +582,22 @@ const styles = {
   headerWrap: {
     position: "relative",
     zIndex: 2,
-    padding: "34px 22px 10px",
+    width: "min(760px, calc(100% - 28px))",
+    margin: "0 auto",
+    padding: "28px 0 10px",
     display: "flex",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    gap: 14,
+    gap: 12,
   },
   headerLeft: {},
   headerRight: { display: "flex", alignItems: "center", gap: 10 },
   title: {
-    fontSize: 32,
+    fontSize: "clamp(24px, 7vw, 32px)",
     fontWeight: 900,
-    letterSpacing: 4,
+    letterSpacing: 3,
     textShadow: "0 18px 48px rgba(0,0,0,0.55)",
+    lineHeight: 1.05,
   },
   subtitle: {
     marginTop: 6,
@@ -608,7 +609,8 @@ const styles = {
   missingBox: {
     position: "relative",
     zIndex: 2,
-    margin: "10px 22px 0",
+    width: "min(760px, calc(100% - 28px))",
+    margin: "10px auto 0",
     padding: 12,
     borderRadius: 16,
     border: "1px solid rgba(248,113,113,0.7)",
@@ -616,18 +618,35 @@ const styles = {
   },
   missingTitle: { color: "#fecaca", fontWeight: 900, fontSize: 13 },
   missingText: { marginTop: 6, color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: 700 },
-  stripeBar: {
+  payoutPanel: {
     position: "relative",
     zIndex: 2,
-    margin: "8px 22px 0",
-    padding: "10px 12px",
-    borderRadius: 14,
+    width: "min(760px, calc(100% - 28px))",
+    margin: "8px auto 0",
+    padding: "10px",
+    borderRadius: 18,
     border: "1px solid rgba(148,163,184,0.2)",
     background: "rgba(15,23,42,0.45)",
     display: "flex",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  payoutCopy: {
+    minWidth: 0,
+    flex: "1 1 260px",
+    display: "flex",
+    alignItems: "center",
     gap: 8,
     flexWrap: "wrap",
+  },
+  payoutTabs: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    flex: "0 0 auto",
   },
   stripeBarLabel: {
     fontSize: 12,
@@ -649,11 +668,13 @@ const styles = {
   field: {
     position: "relative",
     zIndex: 2,
-    padding: 18,
-    display: "flex",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    gap: 18,
+    width: "min(760px, calc(100% - 28px))",
+    margin: "0 auto",
+    padding: "16px 0 18px",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(126px, 1fr))",
+    gap: 14,
+    justifyItems: "center",
   },
   footerNote: {
     position: "fixed",
@@ -777,8 +798,46 @@ function css(accent) {
     box-shadow: 0 0 0 6px rgba(129,140,248,0.18);
   }
 
+  .oh-tab{
+    height: 36px;
+    border-radius: 999px;
+    padding: 0 13px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(2,6,23,0.48);
+    color: rgba(255,255,255,0.9);
+    font-weight: 900;
+    letter-spacing: 0.55px;
+    cursor: pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    white-space: nowrap;
+    backdrop-filter: blur(10px);
+    transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    user-select: none;
+    text-transform: uppercase;
+    font-size: 10.5px;
+  }
+  .oh-tabPrimary{
+    border-color: ${hexToRgba(accent || "#818cf8", 0.42)};
+    background: ${hexToRgba(accent || "#818cf8", 0.16)};
+  }
+  .oh-tab:hover{
+    transform: translateY(-1px);
+    border-color: rgba(129,140,248,0.55);
+    background: rgba(15,23,42,0.65);
+  }
+  .oh-tab:active{ transform: translateY(0px) scale(0.995); opacity: 0.95; }
+  .oh-tab:disabled{
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
   .oh-tile{
-    border-radius: 28px;
+    width: min(136px, 100%) !important;
+    height: 136px !important;
+    border-radius: 24px;
     background: rgba(15,23,42,0.66);
     border: 1px solid rgba(255,255,255,0.10);
     box-shadow: 0 18px 42px rgba(0,0,0,0.45);
@@ -825,13 +884,13 @@ function css(accent) {
   }
 
   .oh-icon{
-    font-size: 48px;
+    font-size: 42px;
     line-height: 1;
     filter: drop-shadow(0 10px 22px rgba(0,0,0,0.45));
   }
 
   .oh-label{
-    font-size: 14px;
+    font-size: 12.5px;
     font-weight: 900;
     letter-spacing: 1px;
     text-transform: uppercase;
@@ -841,10 +900,15 @@ function css(accent) {
     padding: 0 8px;
   }
 
-  @media (max-width: 520px){
-    .oh-icon{ font-size: 42px; }
-    .oh-label{ font-size: 13px; }
-    .oh-pill{ font-size: 10px; }
+  @media (max-width: 620px){
+    .oh-pill{ height: 34px; font-size: 9.5px; padding: 0 10px; }
+    .oh-tab{ flex: 1 1 0; min-width: 0; height: 34px; padding: 0 10px; font-size: 9.5px; }
+    .oh-icon{ font-size: 38px; }
+    .oh-label{ font-size: 11.5px; letter-spacing: 0.7px; }
+  }
+
+  @media (max-width: 390px){
+    .oh-tile{ height: 124px !important; }
   }
   `;
 }
