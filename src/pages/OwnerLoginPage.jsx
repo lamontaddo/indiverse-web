@@ -1,4 +1,4 @@
-// src/pages/OwnerLoginPage.jsx ✅ FULL DROP-IN (Web) — FIXED (NO SAME-ORIGIN API)
+// src/pages/OwnerLoginPage.jsx ✅ FULL DROP-IN (Web) — FIXED + MOBILE OPTIMIZED
 // Route: /world/:profileKey/owner/login
 //
 // ✅ Web version of your RN OwnerLoginScreen (terminal UI + typed intro + shake)
@@ -7,6 +7,7 @@
 // ✅ Stores token in localStorage (profile-scoped)
 // ✅ Uses ABSOLUTE API base via ownerApi.web (prevents indiverse-web /api 404)
 // ✅ “Execute” button + Enter-to-submit
+// ✅ Mobile-safe viewport, scroll, touch targets, and responsive terminal card
 //
 // Requires:
 // - src/utils/ownerApi.web.js   (from my last message)
@@ -225,7 +226,7 @@ export default function OwnerLoginPage() {
           ‹
         </button>
         <div style={styles.headerTitle}>{ownerName} • Owner Console</div>
-        <div style={{ width: 36 }} />
+        <div style={{ width: 40, flex: "0 0 40px" }} />
       </div>
 
       <div style={styles.centerWrap}>
@@ -346,49 +347,70 @@ export default function OwnerLoginPage() {
 const styles = {
   page: {
     minHeight: "100vh",
+    
     color: "#e5e7eb",
     background:
-      "radial-gradient(1200px 600px at 20% 10%, rgba(79,70,229,0.22), transparent 60%)," +
-      "radial-gradient(900px 500px at 80% 30%, rgba(124,58,237,0.18), transparent 60%)," +
+      "radial-gradient(900px 480px at 18% 8%, rgba(79,70,229,0.22), transparent 60%)," +
+      "radial-gradient(720px 420px at 85% 24%, rgba(124,58,237,0.18), transparent 60%)," +
       "linear-gradient(180deg, #020617, #050816, #0b1120)",
     fontFamily:
       'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"',
+    overflowX: "hidden",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    paddingBottom: "max(22px, env(safe-area-inset-bottom))",
   },
   headerRow: {
+    width: "min(620px, calc(100% - 28px))",
+    margin: "0 auto",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "18px 18px 10px",
+    gap: 10,
+    padding: "max(14px, env(safe-area-inset-top)) 0 8px",
   },
   backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 40,
+    height: 40,
+    flex: "0 0 40px",
+    borderRadius: 12,
     border: "1px solid rgba(148,163,184,0.25)",
-    background: "rgba(15,23,42,0.55)",
+    background: "rgba(15,23,42,0.58)",
     color: "#e5e7eb",
     cursor: "pointer",
-    fontSize: 20,
-    lineHeight: "34px",
+    fontSize: 24,
+    lineHeight: "36px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    WebkitTapHighlightColor: "transparent",
   },
   headerTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    letterSpacing: 0.6,
+    minWidth: 0,
+    flex: 1,
+    fontSize: "clamp(12px, 3.5vw, 14px)",
+    fontWeight: 700,
+    letterSpacing: 0.5,
     opacity: 0.95,
     textAlign: "center",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   centerWrap: {
+    width: "min(620px, calc(100% - 28px))",
+    margin: "0 auto",
     display: "flex",
     justifyContent: "center",
-    padding: "22px 18px 38px",
+    alignItems: "flex-start",
+    padding: "18px 0 34px",
   },
   card: {
-    width: "min(620px, 96vw)",
+    width: "100%",
     borderRadius: 24,
     padding: 14,
     border: "1px solid rgba(148,163,184,0.35)",
-    background: "rgba(15,23,42,0.62)",
+    background: "rgba(15,23,42,0.66)",
     boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
     backdropFilter: "blur(18px)",
     WebkitBackdropFilter: "blur(18px)",
@@ -401,18 +423,20 @@ const styles = {
     paddingBottom: 10,
     borderBottom: "1px solid rgba(148,163,184,0.25)",
     marginBottom: 12,
+    minWidth: 0,
   },
   windowDots: { display: "flex", gap: 6, marginRight: 2 },
   dot: { width: 9, height: 9, borderRadius: 999 },
-  cardTitle: { flex: 1, color: "#9ca3af", fontSize: 12 },
+  cardTitle: { flex: 1, minWidth: 0, color: "#9ca3af", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   shield: { fontSize: 16, opacity: 0.9 },
-  terminalBody: { minHeight: 220 },
+  terminalBody: { minHeight: 220, overflowX: "hidden" },
   pre: {
     margin: 0,
     whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-    fontSize: 12,
+    fontSize: "clamp(11px, 3.2vw, 12px)",
     lineHeight: "18px",
     color: "#e5e7eb",
   },
@@ -420,14 +444,16 @@ const styles = {
   promptLine: {
     display: "flex",
     alignItems: "center",
-    marginTop: 6,
+    marginTop: 8,
     gap: 0,
+    minWidth: 0,
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-    fontSize: 12,
+    fontSize: "clamp(11px, 3.2vw, 12px)",
   },
-  prompt: { fontSize: 12 },
+  prompt: { fontSize: "inherit", flex: "0 0 auto" },
   inputInline: {
+    minWidth: 0,
     flex: 1,
     background: "transparent",
     border: "none",
@@ -435,38 +461,66 @@ const styles = {
     color: "#e5e7eb",
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-    fontSize: 12,
-    padding: "2px 0",
+    fontSize: "max(16px, 1em)",
+    lineHeight: "20px",
+    padding: "8px 0",
   },
-  statusLine: { display: "flex", alignItems: "center", gap: 8, marginTop: 8 },
+  statusLine: { display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" },
   line: {
-    marginTop: 6,
+    marginTop: 8,
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-    fontSize: 12,
+    fontSize: "clamp(11px, 3.2vw, 12px)",
     lineHeight: "18px",
+    overflowWrap: "anywhere",
   },
   button: {
-    marginTop: 12,
+    width: "100%",
+    minHeight: 46,
+    marginTop: 14,
     borderRadius: 999,
     border: "1px solid rgba(148,163,184,0.25)",
     cursor: "pointer",
     background: "linear-gradient(90deg, #4f46e5, #7c3aed)",
     padding: 0,
+    WebkitTapHighlightColor: "transparent",
   },
   buttonInner: {
+    minHeight: 46,
     display: "inline-flex",
     alignItems: "center",
+    justifyContent: "center",
     gap: 8,
-    padding: "9px 14px",
+    width: "100%",
+    padding: "11px 16px",
     color: "#fff",
-    fontWeight: 700,
-    fontSize: 12,
+    fontWeight: 800,
+    fontSize: 13,
     letterSpacing: 0.6,
   },
 };
 
 const css = `
+*{ box-sizing: border-box; }
+html{
+  min-height: 100%;
+  background: #020617;
+}
+body{
+  margin: 0;
+  min-height: 100%;
+  background: #020617;
+}
+button, input{
+  font-family: inherit;
+}
+input{
+  -webkit-text-size-adjust: 100%;
+}
+button:disabled{
+  cursor: not-allowed;
+}
+
 @keyframes shake {
   0% { transform: translateX(0); }
   15% { transform: translateX(-8px); }
@@ -489,5 +543,23 @@ const css = `
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 520px){
+  .shake { animation: shakeMobile 0.42s ease-in-out; }
+  @keyframes shakeMobile {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(-4px); }
+    40% { transform: translateX(4px); }
+    60% { transform: translateX(-3px); }
+    80% { transform: translateX(3px); }
+    100% { transform: translateX(0); }
+  }
+}
+
+@media (max-width: 420px){
+  input::placeholder{
+    color: rgba(148,163,184,0.58);
+  }
 }
 `;
