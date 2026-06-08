@@ -2,6 +2,7 @@
 // Route: /world/:profileKey/owner/home
 //
 // ✅ Keeps owner PayPal payout info modal
+// ✅ Hydrates saved PayPal email on dashboard load and modal open
 // ✅ Moves Payment Info + Withdraw into compact payout tabs
 // ✅ Keeps Earnings as a dashboard tile
 // ✅ Routes Earnings tile to /world/:profileKey/owner/earnings
@@ -189,15 +190,23 @@ export default function OwnerHomePage() {
 
       const summary = data?.summary || {};
 
+      const savedPayPalEmail = String(summary?.paypalPayoutEmail || summary?.paypalEmail || "")
+        .trim()
+        .toLowerCase();
+
       setEarningsSummary({
         loading: false,
         availableToWithdraw: Number(summary?.availableToWithdraw ?? summary?.pendingPayout ?? 0),
         pendingWithdrawal: Number(summary?.pendingWithdrawal || 0),
         paidOut: Number(summary?.paidOut || 0),
-        payoutReady: Boolean(summary?.payoutReady),
-        paypalPayoutEmail: String(summary?.paypalPayoutEmail || summary?.paypalEmail || ""),
+        payoutReady: Boolean(summary?.payoutReady || savedPayPalEmail),
+        paypalPayoutEmail: savedPayPalEmail,
         error: "",
       });
+
+      if (savedPayPalEmail) {
+        setPaypalEmail(savedPayPalEmail);
+      }
     } catch (err) {
       setEarningsSummary((s) => ({
         ...s,
@@ -207,9 +216,44 @@ export default function OwnerHomePage() {
     }
   }
 
+  async function loadPayPalPaymentInfo() {
+    if (!profileKey) return;
+
+    try {
+      const data = await ownerJsonWeb("/api/owner/paypal/payment-info", {
+        method: "GET",
+        profileKey,
+      });
+
+      const email = String(
+        data?.paypalEmail ||
+          data?.paypalPayoutEmail ||
+          data?.paymentInfo?.paypalEmail ||
+          data?.paymentInfo?.paypalPayoutEmail ||
+          data?.summary?.paypalEmail ||
+          data?.summary?.paypalPayoutEmail ||
+          ""
+      )
+        .trim()
+        .toLowerCase();
+
+      if (email) {
+        setPaypalEmail(email);
+        setEarningsSummary((s) => ({
+          ...s,
+          payoutReady: true,
+          paypalPayoutEmail: email,
+        }));
+      }
+    } catch (err) {
+      console.warn("[OwnerHomePage] unable to load PayPal payment info", err?.message || err);
+    }
+  }
+
   useEffect(() => {
     loadStripeStatus();
     loadEarningsSummary();
+    loadPayPalPaymentInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileKey]);
 
@@ -314,9 +358,17 @@ export default function OwnerHomePage() {
         body: JSON.stringify({ paypalEmail: email }),
       });
 
+      setPaypalEmail(email);
+      setEarningsSummary((s) => ({
+        ...s,
+        payoutReady: true,
+        paypalPayoutEmail: email,
+      }));
+
       window.alert("PayPal payment info saved.");
       setPaypalModalOpen(false);
       await loadEarningsSummary();
+      await loadPayPalPaymentInfo();
     } catch (err) {
       window.alert(err?.message || "Unable to save PayPal payment info.");
     } finally {
@@ -328,6 +380,10 @@ export default function OwnerHomePage() {
     if (!profileKey || withdrawSaving) return;
 
     if (!earningsSummary.payoutReady) {
+      await loadPayPalPaymentInfo();
+    }
+
+    if (!earningsSummary.payoutReady && !paypalEmail) {
       window.alert("Add your PayPal payout email before requesting a withdrawal.");
       setPaypalModalOpen(true);
       return;
@@ -451,7 +507,14 @@ export default function OwnerHomePage() {
           </div>
 
           <div style={styles.payoutTabs}>
-            <button className="oh-tab" onClick={() => setPaypalModalOpen(true)} disabled={!profileKey}>
+            <button
+              className="oh-tab"
+              onClick={async () => {
+                await loadPayPalPaymentInfo();
+                setPaypalModalOpen(true);
+              }}
+              disabled={!profileKey}
+            >
               Payment Info
             </button>
 
@@ -505,7 +568,7 @@ export default function OwnerHomePage() {
             <input
               value={paypalEmail}
               onChange={(e) => setPaypalEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={earningsSummary.paypalPayoutEmail || "you@example.com"}
               style={styles.modalInput}
               type="email"
               autoFocus
