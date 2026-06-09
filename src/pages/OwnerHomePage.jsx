@@ -467,11 +467,11 @@ export default function OwnerHomePage() {
       : earningsSummary.availableToWithdraw > 0
         ? `Available to withdraw: ${formatMoney(earningsSummary.availableToWithdraw)}.`
         : earningsSummary.payoutReady
-          ? earningsSummary.paidOut > 0
-            ? `No balance available right now. Previously paid out: ${formatMoney(earningsSummary.paidOut)}.`
-            : "No balance available right now."
-          : "Add your PayPal email so admin can send payouts.";  return (
-    <div style={styles.page}>
+        ? "No balance available to withdraw right now."
+        : "Add your PayPal email so admin can send payouts.";
+
+return (
+  <div style={styles.page}>
       <style>{css(accent)}</style>
 
       <div style={{ ...styles.glowOne, background: hexToRgba(accent, 0.33) }} />

@@ -26,6 +26,16 @@ function formatMoney(value) {
   }).format(num);
 }
 
+function centsToDollars(cents) {
+  return Number((Number(cents || 0) / 100).toFixed(2));
+}
+
+function pickMoneyFromPossibleCents(dollarsValue, centsValue) {
+  if (Number.isFinite(Number(dollarsValue))) return Number(dollarsValue);
+  if (Number.isFinite(Number(centsValue))) return centsToDollars(centsValue);
+  return 0;
+}
+
 function formatDate(value) {
   if (!value) return "—";
   const d = new Date(value);
@@ -56,13 +66,14 @@ function normalizeSale(sale = {}) {
   return {
     ...sale,
     _id: sale._id || sale.id || `${sale.type || "sale"}-${sale.createdAt || Math.random()}`,
-    amount: pickNumber(
-      sale.amount,
-      sale.netAmount,
-      sale.ownerNet,
-      sale.netEarnings,
-      sale.totalAmount,
-      sale.price
+    amount: pickMoneyFromPossibleCents(
+      sale.amount ?? sale.netAmount ?? sale.ownerNet ?? sale.netEarnings ?? sale.totalAmount ?? sale.price,
+      sale.amountCents ??
+        sale.netAmountCents ??
+        sale.ownerNetCents ??
+        sale.netEarningsCents ??
+        sale.totalAmountCents ??
+        sale.priceCents
     ),
     paymentProvider: String(sale.paymentProvider || sale.provider || "paypal").toLowerCase(),
     paymentStatus: String(sale.paymentStatus || sale.status || "paid").toLowerCase(),
@@ -89,6 +100,8 @@ export default function OwnerEarningsPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
   const [summary, setSummary] = useState({
     totalRevenue: 0,
     totalSales: 0,
@@ -101,11 +114,15 @@ export default function OwnerEarningsPage() {
     recentSales: [],
   });
 
+  const payoutEmail = summary.paypalPayoutEmail || summary.paypalEmail;
+  const withdrawableAmount = Number(summary.pendingPayout || summary.netEarnings || 0);
+
   async function loadSummary() {
     if (!profileKey) return;
 
     setLoading(true);
     setError("");
+    setSuccess("");
 
     try {
       const data = await ownerJsonWeb("/api/owner/earnings/summary", {
@@ -120,17 +137,29 @@ export default function OwnerEarningsPage() {
 
       const paypalEmail = String(rawSummary?.paypalEmail || "").trim();
       const paypalPayoutEmail = String(rawSummary?.paypalPayoutEmail || "").trim();
-      const payoutEmail = paypalPayoutEmail || paypalEmail;
+      const payoutEmailFromSummary = paypalPayoutEmail || paypalEmail;
 
       setSummary({
-        totalRevenue: pickNumber(rawSummary?.totalRevenue, rawSummary?.grossRevenue, rawSummary?.grossEarnings),
+        totalRevenue: pickMoneyFromPossibleCents(
+          rawSummary?.totalRevenue ?? rawSummary?.grossRevenue ?? rawSummary?.grossEarnings,
+          rawSummary?.totalRevenueCents ?? rawSummary?.grossRevenueCents ?? rawSummary?.grossEarningsCents
+        ),
         totalSales: pickNumber(rawSummary?.totalSales, rawSummary?.salesCount, recentSales.length),
-        netEarnings: pickNumber(rawSummary?.netEarnings, rawSummary?.ownerNet, rawSummary?.availableBalance),
-        pendingPayout: pickNumber(rawSummary?.pendingPayout, rawSummary?.pendingBalance, rawSummary?.unpaidEarnings),
-        paidOut: pickNumber(rawSummary?.paidOut, rawSummary?.paidOutAmount, rawSummary?.totalPaidOut),
+        netEarnings: pickMoneyFromPossibleCents(
+          rawSummary?.netEarnings ?? rawSummary?.ownerNet ?? rawSummary?.availableBalance,
+          rawSummary?.netEarningsCents ?? rawSummary?.ownerNetCents ?? rawSummary?.availableBalanceCents
+        ),
+        pendingPayout: pickMoneyFromPossibleCents(
+          rawSummary?.pendingPayout ?? rawSummary?.pendingBalance ?? rawSummary?.unpaidEarnings,
+          rawSummary?.pendingPayoutCents ?? rawSummary?.pendingBalanceCents ?? rawSummary?.unpaidEarningsCents
+        ),
+        paidOut: pickMoneyFromPossibleCents(
+          rawSummary?.paidOut ?? rawSummary?.paidOutAmount ?? rawSummary?.totalPaidOut,
+          rawSummary?.paidOutCents ?? rawSummary?.paidOutAmountCents ?? rawSummary?.totalPaidOutCents
+        ),
         paypalEmail,
         paypalPayoutEmail,
-        payoutReady: Boolean(rawSummary?.payoutReady ?? rawSummary?.canReceivePayouts ?? payoutEmail),
+        payoutReady: Boolean(rawSummary?.payoutReady ?? rawSummary?.canReceivePayouts ?? payoutEmailFromSummary),
         recentSales,
       });
     } catch (err) {
@@ -140,11 +169,49 @@ export default function OwnerEarningsPage() {
     }
   }
 
+  async function requestWithdrawal() {
+    if (!profileKey || withdrawing) return;
+
+    if (!payoutEmail) {
+      setError("Add your PayPal payout email before requesting a withdrawal.");
+      setSuccess("");
+      return;
+    }
+
+    if (withdrawableAmount <= 0) {
+      setError("No unpaid earnings are available for withdrawal yet.");
+      setSuccess("");
+      return;
+    }
+
+    setWithdrawing(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const data = await ownerJsonWeb("/api/owner/withdrawals", {
+        method: "POST",
+        profileKey,
+      });
+
+      const withdrawal = data?.withdrawal || data || {};
+      const requestedAmount = withdrawal?.amount || withdrawal?.netAmount || withdrawableAmount;
+
+      setSuccess(
+        `Withdrawal requested for ${formatMoney(requestedAmount)}. Admin will process it manually.`
+      );
+
+      await loadSummary();
+    } catch (err) {
+      setError(err?.message || "Unable to request withdrawal");
+    } finally {
+      setWithdrawing(false);
+    }
+  }
+
   useEffect(() => {
     loadSummary();
   }, [profileKey]);
-
-  const payoutEmail = summary.paypalPayoutEmail || summary.paypalEmail;
 
   const goBackHome = () => {
     if (!profileKey) return navigate("/", { replace: false });
@@ -168,8 +235,16 @@ export default function OwnerEarningsPage() {
         </div>
 
         <div style={styles.headerActions}>
-          <button className="oe-pill" onClick={loadSummary} disabled={loading}>
+          <button className="oe-pill" onClick={loadSummary} disabled={loading || withdrawing}>
             Refresh
+          </button>
+
+          <button
+            className="oe-pill oe-primary"
+            onClick={requestWithdrawal}
+            disabled={loading || withdrawing || !summary.payoutReady || withdrawableAmount <= 0}
+          >
+            {withdrawing ? "Requesting…" : "Request Withdrawal"}
           </button>
 
           <button className="oe-pill" onClick={goBackHome}>
@@ -194,6 +269,13 @@ export default function OwnerEarningsPage() {
         </div>
       ) : null}
 
+      {success ? (
+        <div style={styles.successBox}>
+          <div style={styles.successTitle}>Withdrawal requested</div>
+          <div style={styles.successText}>{success}</div>
+        </div>
+      ) : null}
+
       <div style={styles.cardsRow}>
         <div className="oe-card">
           <div className="oe-cardLabel">Total Revenue</div>
@@ -212,7 +294,7 @@ export default function OwnerEarningsPage() {
         <div className="oe-card">
           <div className="oe-cardLabel">Pending Payout</div>
           <div className="oe-cardValue">
-            {loading ? "—" : formatMoney(summary.pendingPayout || summary.netEarnings)}
+            {loading ? "—" : formatMoney(withdrawableAmount)}
           </div>
         </div>
 
@@ -277,7 +359,8 @@ export default function OwnerEarningsPage() {
                     {(sale.typeLabel || "Sale")} • {(sale.subtitle || "—")} • {formatDate(sale.createdAt)}
                   </div>
                   <div style={styles.saleMetaTiny}>
-                    {sale.paymentProvider.toUpperCase()} • {sale.paymentStatus || "paid"} • payout {sale.payoutStatus || "pending"}
+                    {sale.paymentProvider.toUpperCase()} • {sale.paymentStatus || "paid"} • payout{" "}
+                    {sale.payoutStatus || "pending"}
                   </div>
                 </div>
 
@@ -405,6 +488,25 @@ const styles = {
     marginTop: 6,
     fontSize: 13,
   },
+  successBox: {
+    position: "relative",
+    zIndex: 2,
+    margin: "0 22px 14px",
+    padding: 14,
+    borderRadius: 16,
+    border: "1px solid rgba(134,239,172,0.55)",
+    background: "rgba(20,83,45,0.18)",
+  },
+  successTitle: {
+    color: "#bbf7d0",
+    fontSize: 13,
+    fontWeight: 900,
+  },
+  successText: {
+    color: "rgba(255,255,255,0.82)",
+    marginTop: 6,
+    fontSize: 13,
+  },
   cardsRow: {
     position: "relative",
     zIndex: 2,
@@ -518,11 +620,18 @@ function css(accent) {
     text-transform: uppercase;
     font-size: 11px;
   }
+
+  .oe-primary{
+    border-color: ${hexToRgba(accent, 0.75)};
+    background: linear-gradient(135deg, ${hexToRgba(accent, 0.72)}, rgba(15,23,42,0.70));
+  }
+
   .oe-pill:hover{
     transform: translateY(-1px);
     border-color: ${hexToRgba(accent, 0.65)};
     background: rgba(15,23,42,0.55);
   }
+
   .oe-pill:disabled{
     opacity: 0.55;
     cursor: not-allowed;
