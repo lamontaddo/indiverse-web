@@ -99,11 +99,38 @@ function validateForm(form) {
 }
 
 function guessVideoContentTypeFromName(name = "") {
-  const n = String(name).toLowerCase();
-  if (n.endsWith(".mov")) return "video/quicktime";
+  const n = String(name || "").toLowerCase();
+  if (n.endsWith(".mov") || n.endsWith(".qt")) return "video/quicktime";
   if (n.endsWith(".m4v")) return "video/x-m4v";
   if (n.endsWith(".webm")) return "video/webm";
+  if (n.endsWith(".mpg") || n.endsWith(".mpeg")) return "video/mpeg";
+  if (n.endsWith(".3gp")) return "video/3gpp";
+  if (n.endsWith(".3g2")) return "video/3gpp2";
   return "video/mp4";
+}
+
+function normalizeVideoContentType({ file, filename }) {
+  const raw = String(file?.type || "").trim().toLowerCase();
+  const guessed = guessVideoContentTypeFromName(filename || file?.name || "");
+
+  // iOS Safari / photo library can hand back blank, generic, or odd MIME types
+  // even when the selected asset is a normal MP4/MOV.
+  if (!raw) return guessed;
+  if (raw === "application/octet-stream") return guessed;
+  if (raw === "video/quicktime") return "video/quicktime";
+  if (raw === "video/x-quicktime") return "video/quicktime";
+  if (raw === "video/mp4") return "video/mp4";
+  if (raw === "video/mpeg") return "video/mpeg";
+  if (raw === "video/webm") return "video/webm";
+  if (raw === "video/x-m4v") return "video/x-m4v";
+  if (raw === "video/3gpp") return "video/3gpp";
+  if (raw === "video/3gpp2") return "video/3gpp2";
+
+  // If the browser says video/* but the backend only supports known types,
+  // prefer the extension-based type so the signer can allow it.
+  if (raw.startsWith("video/")) return guessed;
+
+  return guessed;
 }
 
 function guessImageContentTypeFromName(name = "") {
@@ -267,28 +294,28 @@ export default function OwnerPaidVideosPage() {
     async (file) => {
       if (!profileKey) return alert("Missing profileKey");
       if (!file) return;
-  
+
       console.log("video size MB:", file.size / 1024 / 1024);
       console.log("video type:", file.type);
-  
+
       if (uploadingVideo || uploadingPreview || uploadingThumb || saving) return;
-  
+
       try {
         setUploadingVideo(true);
-  
+
         const filename = file.name || `video-${Date.now()}.mp4`;
-        const contentType = file.type || guessVideoContentTypeFromName(filename);
-  
+        const contentType = normalizeVideoContentType({ file, filename });
+
         const signed = await signUpload({ filename, contentType, kind: "video" });
         const putUrl = signed?.putUrl;
         const key = signed?.key;
-  
+
         if (!putUrl || !key) throw new Error("Upload signer did not return putUrl/key.");
-  
+
         await uploadFileToPutUrl({ putUrl, file, contentType });
-  
+
         setForm((s) => ({ ...s, sourceType: "s3", s3KeyFull: key }));
-  
+
         alert("Full video uploaded. Now upload a preview clip (10–20s), then hit Save.");
       } catch (e) {
         alert(e?.message || "Upload failed");
@@ -309,7 +336,7 @@ export default function OwnerPaidVideosPage() {
         setUploadingPreview(true);
 
         const filename = file.name || `preview-${Date.now()}.mp4`;
-        const contentType = file.type || guessVideoContentTypeFromName(filename);
+        const contentType = normalizeVideoContentType({ file, filename });
 
         const signed = await signUpload({ filename, contentType, kind: "preview" });
         const putUrl = signed?.putUrl;
@@ -731,7 +758,7 @@ export default function OwnerPaidVideosPage() {
                     >
                       <input
                         type="file"
-                        accept="video/*"
+                        accept="video/mp4,video/quicktime,video/x-m4v,video/webm,video/mpeg,video/3gpp,video/3gpp2,.mp4,.mov,.m4v,.webm,.mpeg,.mpg,.3gp,.3g2"
                         disabled={saveDisabled}
                         style={{ display: "none" }}
                         onChange={(e) => pickAndUploadVideo(e.target.files?.[0] || null)}
@@ -764,7 +791,7 @@ export default function OwnerPaidVideosPage() {
                     >
                       <input
                         type="file"
-                        accept="video/*"
+                        accept="video/mp4,video/quicktime,video/x-m4v,video/webm,video/mpeg,video/3gpp,video/3gpp2,.mp4,.mov,.m4v,.webm,.mpeg,.mpg,.3gp,.3g2"
                         disabled={saveDisabled}
                         style={{ display: "none" }}
                         onChange={(e) => pickAndUploadPreview(e.target.files?.[0] || null)}
