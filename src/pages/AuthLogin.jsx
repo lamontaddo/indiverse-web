@@ -118,8 +118,12 @@ export default function AuthLogin() {
               placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              autoCapitalize="none"
               autoComplete="email"
+              type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
           </div>
 
@@ -133,6 +137,9 @@ export default function AuthLogin() {
               type={showPass ? "text" : "password"}
               onKeyDown={(e) => (e.key === "Enter" ? onLogin() : null)}
               autoComplete="current-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
             <button
               onClick={() => setShowPass((v) => !v)}
@@ -159,41 +166,47 @@ export default function AuthLogin() {
 
 const styles = {
   root: {
-    minHeight: "100vh",
+    minHeight: "100dvh",
     background: "#05060b",
     position: "relative",
+    overflowX: "hidden",
+    overflowY: "auto",
     fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
   },
   bg: {
-    position: "absolute",
+    position: "fixed",
     inset: 0,
-    background: "linear-gradient(180deg, #0b1020, #090b14, #06070d)",
+    background:
+      "radial-gradient(circle at 20% 10%, rgba(129,140,248,0.22), rgba(0,0,0,0) 34%), linear-gradient(180deg, #0b1020, #090b14, #06070d)",
   },
   center: {
     position: "relative",
     zIndex: 1,
-    minHeight: "100vh",
+    minHeight: "100dvh",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
+    padding: "max(18px, env(safe-area-inset-top)) 16px max(22px, env(safe-area-inset-bottom))",
   },
   card: {
-    width: "min(520px, 92vw)",
-    borderRadius: 18,
-    padding: 16,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(0,0,0,0.35)",
+    width: "min(520px, 100%)",
+    borderRadius: 22,
+    padding: "20px 16px",
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.42)",
     backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    boxShadow: "0 22px 70px rgba(0,0,0,0.34)",
   },
-  title: { color: "#fff", fontSize: 22, fontWeight: 800 },
-  sub: { marginTop: 6, color: "rgba(255,255,255,0.7)" },
+  title: { color: "#fff", fontSize: "clamp(24px, 7vw, 30px)", fontWeight: 900 },
+  sub: { marginTop: 6, color: "rgba(255,255,255,0.72)", fontSize: 14 },
   field: {
     marginTop: 14,
-    height: 50,
-    borderRadius: 14,
+    minHeight: 52,
+    borderRadius: 15,
     padding: "0 12px",
-    border: "1px solid rgba(255,255,255,0.10)",
+    border: "1px solid rgba(255,255,255,0.13)",
+    background: "rgba(255,255,255,0.055)",
     display: "flex",
     alignItems: "center",
     gap: 10,
@@ -201,6 +214,8 @@ const styles = {
   icon: { opacity: 0.75 },
   input: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 50,
     color: "#fff",
     fontSize: 16,
     background: "transparent",
@@ -208,32 +223,41 @@ const styles = {
     outline: "none",
   },
   eyeBtn: {
+    minWidth: 42,
+    minHeight: 42,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     background: "transparent",
     border: "none",
     cursor: "pointer",
     opacity: 0.85,
-    fontSize: 16,
+    fontSize: 18,
+    WebkitTapHighlightColor: "transparent",
   },
   btn: {
     marginTop: 16,
-    height: 50,
-    borderRadius: 14,
+    minHeight: 52,
+    borderRadius: 15,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "rgba(255,255,255,0.14)",
-    border: "none",
+    background: "rgba(255,255,255,0.16)",
+    border: "1px solid rgba(255,255,255,0.12)",
     color: "#fff",
-    fontWeight: 800,
+    fontWeight: 900,
     cursor: "pointer",
     width: "100%",
+    WebkitTapHighlightColor: "transparent",
   },
   link: {
     marginTop: 12,
+    minHeight: 44,
     width: "100%",
     background: "transparent",
     border: "none",
-    color: "rgba(255,255,255,0.75)",
+    color: "rgba(255,255,255,0.78)",
     cursor: "pointer",
+    WebkitTapHighlightColor: "transparent",
   },
 };
