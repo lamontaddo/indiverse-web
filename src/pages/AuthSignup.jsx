@@ -142,6 +142,8 @@ export default function AuthSignup() {
                 placeholder="you@example.com"
                 style={styles.input}
                 disabled={loading}
+                type="email"
+                inputMode="email"
                 autoComplete="email"
               />
             </div>
@@ -156,6 +158,7 @@ export default function AuthSignup() {
                 disabled={loading}
                 type="password"
                 autoComplete="new-password"
+                minLength={8}
               />
               <div style={styles.hint}>At least 8 characters.</div>
             </div>
@@ -189,14 +192,15 @@ export default function AuthSignup() {
 
 const styles = {
   root: {
-    minHeight: '100vh',
+    minHeight: '100dvh',
     background: '#000',
     position: 'relative',
-    overflow: 'hidden',
+    overflowX: 'hidden',
+    overflowY: 'auto',
     fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial',
   },
   video: {
-    position: 'absolute',
+    position: 'fixed',
     inset: 0,
     width: '100%',
     height: '100%',
@@ -212,31 +216,34 @@ const styles = {
   topRow: {
     position: 'relative',
     zIndex: 2,
-    padding: '20px 16px 0',
+    padding: 'max(16px, env(safe-area-inset-top)) 16px 0',
   },
   backBtn: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 8,
-    padding: '8px 12px',
+    minHeight: 42,
+    padding: '9px 13px',
     borderRadius: 999,
     border: '1px solid rgba(148,163,184,0.25)',
-    background: 'rgba(15,23,42,0.45)',
+    background: 'rgba(15,23,42,0.55)',
     color: '#e5e7eb',
     fontWeight: 800,
     cursor: 'pointer',
+    WebkitTapHighlightColor: 'transparent',
   },
   content: {
     position: 'relative',
     zIndex: 2,
-    padding: '16px 18px 24px',
+    padding: '10px 16px max(22px, env(safe-area-inset-bottom))',
+    width: '100%',
     maxWidth: 520,
     margin: '0 auto',
-    minHeight: 'calc(100vh - 60px)',
+    minHeight: 'calc(100dvh - 58px)',
     display: 'flex',
     flexDirection: 'column',
   },
-  header: { marginTop: 10, marginBottom: 12, textAlign: 'center' },
+  header: { marginTop: 4, marginBottom: 10, textAlign: 'center' },
   superTitle: {
     color: '#6b7280',
     fontSize: 13,
@@ -244,51 +251,64 @@ const styles = {
     textTransform: 'uppercase',
     marginBottom: 4,
   },
-  indiTitle: { fontSize: 34, color: '#fff', fontWeight: 900 },
-  cardWrap: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  indiTitle: { fontSize: 'clamp(30px, 9vw, 38px)', color: '#fff', fontWeight: 900 },
+  cardWrap: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    paddingBottom: 8,
+  },
   card: {
     borderRadius: 22,
-    padding: 18,
+    padding: '18px 16px',
     border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(0,0,0,0.35)',
+    background: 'rgba(0,0,0,0.42)',
     backdropFilter: 'blur(14px)',
+    WebkitBackdropFilter: 'blur(14px)',
+    boxShadow: '0 22px 70px rgba(0,0,0,0.34)',
   },
   title: { color: '#fff', fontSize: 24, fontWeight: 900, letterSpacing: 2 },
   sub: { color: 'rgba(255,255,255,0.7)', marginTop: 6, marginBottom: 8 },
-  row: { display: 'flex', gap: 10 },
+  row: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 },
   half: { flex: 1 },
   label: { color: 'rgba(255,255,255,0.8)', fontWeight: 800, marginBottom: 6, fontSize: 12 },
   input: {
     width: '100%',
+    minHeight: 46,
     padding: '12px 12px',
     borderRadius: 14,
     border: '1px solid rgba(255,255,255,0.16)',
-    background: 'rgba(255,255,255,0.06)',
+    background: 'rgba(255,255,255,0.07)',
     color: '#fff',
     outline: 'none',
-    fontSize: 14,
+    fontSize: 16,
   },
   hint: { marginTop: 6, color: 'rgba(255,255,255,0.45)', fontSize: 12 },
   primaryBtn: {
     marginTop: 16,
+    minHeight: 50,
     padding: '14px 14px',
     borderRadius: 16,
-    background: 'rgba(255,255,255,0.9)',
+    background: 'rgba(255,255,255,0.92)',
     border: 'none',
     width: '100%',
     fontWeight: 900,
     letterSpacing: 1,
     cursor: 'pointer',
+    WebkitTapHighlightColor: 'transparent',
   },
   linkBtn: {
     marginTop: 12,
+    minHeight: 44,
     width: '100%',
     background: 'transparent',
     border: 'none',
-    color: 'rgba(255,255,255,0.72)',
+    color: 'rgba(255,255,255,0.78)',
     textDecoration: 'underline',
     cursor: 'pointer',
     fontSize: 13,
+    WebkitTapHighlightColor: 'transparent',
   },
   poweredBy: {
     marginTop: 12,
