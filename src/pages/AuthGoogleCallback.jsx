@@ -1,21 +1,39 @@
 import React, { useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 function safeTrim(v) {
   return String(v || "").trim();
 }
 
+function getParam(name) {
+  const normalParams = new URLSearchParams(window.location.search);
+  const fromNormal = safeTrim(normalParams.get(name));
+  if (fromNormal) return fromNormal;
+
+  const hash = String(window.location.hash || "");
+  const queryIndex = hash.indexOf("?");
+  if (queryIndex >= 0) {
+    const hashQuery = hash.slice(queryIndex + 1);
+    const hashParams = new URLSearchParams(hashQuery);
+    return safeTrim(hashParams.get(name));
+  }
+
+  return "";
+}
+
 export default function AuthGoogleCallback() {
   const nav = useNavigate();
-  const [sp] = useSearchParams();
 
   useEffect(() => {
-    const token = safeTrim(sp.get("token"));
-    const next = safeTrim(sp.get("next"));
-    const userId = safeTrim(sp.get("userId"));
-    const email = safeTrim(sp.get("email"));
-    const firstName = safeTrim(sp.get("firstName"));
-    const lastName = safeTrim(sp.get("lastName"));
+    const token = getParam("token");
+    const next = getParam("next");
+    const userId = getParam("userId");
+    const email = getParam("email");
+    const firstName = getParam("firstName");
+    const lastName = getParam("lastName");
+
+    console.log("[AuthGoogleCallback] token exists:", !!token);
+    console.log("[AuthGoogleCallback] email:", email);
 
     if (!token) {
       nav("/auth/login?error=google_missing_token", { replace: true });
@@ -37,8 +55,10 @@ export default function AuthGoogleCallback() {
       })
     );
 
+    window.dispatchEvent(new Event("storage"));
+
     nav(next || "/", { replace: true });
-  }, [nav, sp]);
+  }, [nav]);
 
   return (
     <div style={styles.root}>
