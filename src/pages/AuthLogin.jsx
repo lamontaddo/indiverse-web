@@ -37,8 +37,8 @@ export default function AuthLogin() {
 
   const startGoogleLogin = () => {
     const next = nextRoute ? `?next=${encodeURIComponent(nextRoute)}` : "";
-    window.location.href = `/api/auth/google/start${next}`;
-  };
+    window.location.href = `https://indiverse-backend.onrender.com/api/auth/google/start${next}`;
+    };
 
   const onLogin = async () => {
     const em = safeTrim(email).toLowerCase();

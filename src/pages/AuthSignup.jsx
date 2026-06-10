@@ -38,7 +38,7 @@ export default function AuthSignup() {
   const startGoogleSignup = () => {
     const next = safeTrim(sp.get('next'));
     const nextParam = next ? `?next=${encodeURIComponent(next)}` : '';
-    window.location.href = `/api/auth/google/start${nextParam}`;
+    window.location.href = `https://indiverse-backend.onrender.com/api/auth/google/start${nextParam}`;
   };
 
   const onSubmit = async () => {
