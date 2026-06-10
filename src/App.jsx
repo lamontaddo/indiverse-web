@@ -39,6 +39,8 @@ import CheckoutReturnPage from "./pages/CheckoutReturnPage.jsx";
 
 import AuthSignup from "./pages/AuthSignup";
 import AuthLogin from "./pages/AuthLogin";
+import AuthGoogleCallback from "./pages/AuthGoogleCallback.jsx";
+
 
 import ChatPage from "./pages/ChatPage.jsx";
 import OwnerFashionPage from "./pages/OwnerFashionPage.jsx";
@@ -174,6 +176,7 @@ export default function App() {
 
           <Route path="/auth/signup" element={<AuthSignup />} />
           <Route path="/auth/login" element={<AuthLogin />} />
+          <Route path="/auth/google/callback" element={<AuthGoogleCallback />} />
 
           <Route path="/account" element={<AccountHome />} />
           <Route path="/account/orders" element={<AccountOrders />} />

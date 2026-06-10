@@ -1,8 +1,9 @@
 // src/pages/AuthSignup.jsx ✅ FULL DROP-IN (WEB)
 // ✅ Buyer signup (platform-wide IndiVerse account)
 // ✅ NO profileKey anywhere
-// ✅ POST /api/auth/register
-// ✅ On success -> /auth/login?email=...
+// ✅ Email/password signup stays unchanged
+// ✅ Adds Continue with Google button
+// ✅ Google should route to backend: /api/auth/google/start
 
 import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -33,6 +34,12 @@ export default function AuthSignup() {
       String(password || '').length >= 8
     );
   }, [firstName, lastName, email, password]);
+
+  const startGoogleSignup = () => {
+    const next = safeTrim(sp.get('next'));
+    const nextParam = next ? `?next=${encodeURIComponent(next)}` : '';
+    window.location.href = `/api/auth/google/start${nextParam}`;
+  };
 
   const onSubmit = async () => {
     const fn = safeTrim(firstName);
@@ -108,7 +115,22 @@ export default function AuthSignup() {
         <div style={styles.cardWrap}>
           <div style={styles.card}>
             <div style={styles.title}>SIGN UP</div>
-            <div style={styles.sub}>Create your account.</div>
+            <div style={styles.sub}>Create your account or continue with Google.</div>
+
+            <button
+              onClick={startGoogleSignup}
+              disabled={loading}
+              style={styles.googleBtn}
+            >
+              <span style={styles.googleIcon}>G</span>
+              Continue with Google
+            </button>
+
+            <div style={styles.divider}>
+              <span style={styles.dividerLine} />
+              <span style={styles.dividerText}>or create with email</span>
+              <span style={styles.dividerLine} />
+            </div>
 
             <div style={styles.row}>
               <div style={styles.half}>
@@ -269,7 +291,56 @@ const styles = {
     boxShadow: '0 22px 70px rgba(0,0,0,0.34)',
   },
   title: { color: '#fff', fontSize: 24, fontWeight: 900, letterSpacing: 2 },
-  sub: { color: 'rgba(255,255,255,0.7)', marginTop: 6, marginBottom: 8 },
+  sub: { color: 'rgba(255,255,255,0.7)', marginTop: 6, marginBottom: 12 },
+
+  googleBtn: {
+    marginTop: 10,
+    minHeight: 50,
+    padding: '13px 14px',
+    borderRadius: 16,
+    background: 'rgba(255,255,255,0.96)',
+    border: '1px solid rgba(255,255,255,0.24)',
+    width: '100%',
+    fontWeight: 900,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    color: '#111827',
+    WebkitTapHighlightColor: 'transparent',
+  },
+  googleIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    background: '#fff',
+    color: '#111827',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 950,
+    fontSize: 17,
+    boxShadow: '0 1px 4px rgba(0,0,0,0.18)',
+  },
+  divider: {
+    margin: '14px 0 12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dividerLine: {
+    height: 1,
+    flex: 1,
+    background: 'rgba(255,255,255,0.12)',
+  },
+  dividerText: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 12,
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+  },
+
   row: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 },
   half: { flex: 1 },
   label: { color: 'rgba(255,255,255,0.8)', fontWeight: 800, marginBottom: 6, fontSize: 12 },
