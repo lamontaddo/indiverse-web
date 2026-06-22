@@ -456,7 +456,7 @@ export default function UniverseHome() {
 
             <div className="subtitle">
               Choose a world to enter. Each app is its own universe, with its own vibe, music, and
-              people.
+              personality.
             </div>
 
             <div className="pillRow">

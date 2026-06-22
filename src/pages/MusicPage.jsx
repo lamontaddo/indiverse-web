@@ -1,11 +1,12 @@
 // src/pages/MusicPage.jsx ✅ FULL DROP-IN (WEB)
 // ✅ Adds free-item "Add to Library"
-// ✅ Paid items use PayPal checkout
-// ✅ Captures PayPal order after redirect and unlocks entitlement
+// ✅ Paid items use Square checkout modal
+// ✅ Square card form appears only inside checkout modal
 // ✅ Free claim creates MusicPurchase via /api/music/free-claim
-// ✅ Refreshes catalog after successful free claim / PayPal capture
+// ✅ Refreshes catalog after successful free claim / Square purchase
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { payments } from "@square/web-sdk";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 const DEFAULT_REMOTE_CONFIG_URL =
@@ -15,16 +16,20 @@ const DEFAULT_REMOTE_CONFIG_URL =
 function cleanKey(v) {
   return String(v || "").trim().toLowerCase();
 }
+
 function safeUrl(s) {
   const v = typeof s === "string" ? s.trim() : "";
   return v ? v : null;
 }
+
 function isHttpUrl(s) {
   return typeof s === "string" && /^https?:\/\//i.test(s.trim());
 }
+
 function isMongoObjectId(s) {
   return typeof s === "string" && /^[a-f0-9]{24}$/i.test(s.trim());
 }
+
 function decodeJwtPayload(jwtToken) {
   try {
     const t = String(jwtToken || "").trim();
@@ -39,6 +44,7 @@ function decodeJwtPayload(jwtToken) {
     return null;
   }
 }
+
 function decodeJwtUserId(jwtToken) {
   const p = decodeJwtPayload(jwtToken);
   if (!p) return null;
@@ -50,8 +56,7 @@ function decodeJwtUserId(jwtToken) {
 }
 
 function apiBase() {
-  const base = String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
-  return base;
+  return String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
 }
 
 async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {}) {
@@ -78,6 +83,7 @@ async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {})
   }
 
   if (!text) return {};
+
   try {
     return JSON.parse(text);
   } catch {
@@ -88,6 +94,7 @@ async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {})
 async function fetchRemoteConfig({ url = DEFAULT_REMOTE_CONFIG_URL, timeoutMs = 9000 } = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
   try {
     const res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
     if (!res.ok) throw new Error(`remote config fetch failed: ${res.status}`);
@@ -96,6 +103,7 @@ async function fetchRemoteConfig({ url = DEFAULT_REMOTE_CONFIG_URL, timeoutMs = 
     clearTimeout(t);
   }
 }
+
 function getProfileByKeyFromCfg(cfg, key) {
   const list = Array.isArray(cfg?.profiles) ? cfg.profiles : [];
   const k = String(key || "").trim();
@@ -104,6 +112,7 @@ function getProfileByKeyFromCfg(cfg, key) {
 
 function moneyFromCents(cents, currency = "usd") {
   const n = Number(cents || 0) / 100;
+
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -130,10 +139,6 @@ function formatTime(seconds) {
 export default function MusicPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const searchParams = new URLSearchParams(location.search);
-  const checkoutSuccess = searchParams.get("checkout") === "success";
-  const checkoutProvider = cleanKey(searchParams.get("provider"));
-  const paypalCheckoutSuccess = checkoutSuccess && checkoutProvider === "paypal";
   const { profileKey: paramsProfileKey } = useParams();
   const profileKey = useMemo(() => cleanKey(paramsProfileKey) || "lamont", [paramsProfileKey]);
 
@@ -141,19 +146,45 @@ export default function MusicPage() {
   const isAuthed = !!token;
   const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
 
+  const [cfg, setCfg] = useState(null);
+  const profile = useMemo(() => getProfileByKeyFromCfg(cfg, profileKey), [cfg, profileKey]);
+
+  const [albums, setAlbums] = useState([]);
+  const [tracks, setTracks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedAlbumId, setSelectedAlbumId] = useState(null);
+  const [errorNote, setErrorNote] = useState("");
+  const [checkoutNote, setCheckoutNote] = useState("");
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutItem, setCheckoutItem] = useState(null);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [squareReady, setSquareReady] = useState(false);
+  const [squareError, setSquareError] = useState("");
+
+  const squareCardRef = useRef(null);
+  const squareInitRef = useRef(false);
+  const audioRef = useRef(null);
+  const tickRef = useRef(null);
+
+  const [playingTrackId, setPlayingTrackId] = useState(null);
+  const [currentTrack, setCurrentTrack] = useState(null);
+  const [isPreview, setIsPreview] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isRepeating, setIsRepeating] = useState(false);
+  const [positionSec, setPositionSec] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+
   useEffect(() => {
     const syncToken = () => setToken(localStorage.getItem("buyerToken") || "");
     window.addEventListener("focus", syncToken);
     window.addEventListener("storage", syncToken);
     syncToken();
+
     return () => {
       window.removeEventListener("focus", syncToken);
       window.removeEventListener("storage", syncToken);
     };
   }, [location?.key]);
-
-  const [cfg, setCfg] = useState(null);
-  const profile = useMemo(() => getProfileByKeyFromCfg(cfg, profileKey), [cfg, profileKey]);
 
   const bgUrl = useMemo(() => {
     const paramBg = safeUrl(location?.state?.bgUrl);
@@ -163,6 +194,7 @@ export default function MusicPage() {
     if (paramBg && isHttpUrl(paramBg)) return paramBg;
     if (remoteIntro && isHttpUrl(remoteIntro)) return remoteIntro;
     if (remoteIcon && isHttpUrl(remoteIcon)) return remoteIcon;
+
     return null;
   }, [location?.state?.bgUrl, profile]);
 
@@ -175,33 +207,6 @@ export default function MusicPage() {
     );
   }, [profile, profileKey]);
 
-  useEffect(() => {
-    let alive = true;
-    fetchRemoteConfig()
-      .then((d) => alive && setCfg(d))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const [albums, setAlbums] = useState([]);
-  const [tracks, setTracks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedAlbumId, setSelectedAlbumId] = useState(null);
-  const [errorNote, setErrorNote] = useState("");
-  const [checkoutNote, setCheckoutNote] = useState("");
-
-  const audioRef = useRef(null);
-  const [playingTrackId, setPlayingTrackId] = useState(null);
-  const [currentTrack, setCurrentTrack] = useState(null);
-  const [isPreview, setIsPreview] = useState(true);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isRepeating, setIsRepeating] = useState(false);
-  const [positionSec, setPositionSec] = useState(0);
-  const [durationSec, setDurationSec] = useState(0);
-  const tickRef = useRef(null);
-
   const buildHeaders = useCallback(
     (extra = {}) => {
       const h = { "x-profile-key": String(profileKey || ""), ...extra };
@@ -212,6 +217,109 @@ export default function MusicPage() {
     [profileKey, token, buyerUserId]
   );
 
+  useEffect(() => {
+    let alive = true;
+
+    fetchRemoteConfig()
+      .then((d) => alive && setCfg(d))
+      .catch(() => {});
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const cleanupSquareCard = useCallback(async () => {
+    try {
+      if (squareCardRef.current?.destroy) {
+        await squareCardRef.current.destroy();
+      }
+    } catch {}
+
+    squareCardRef.current = null;
+    squareInitRef.current = false;
+
+    const el = document.getElementById("square-card-container");
+    if (el) el.replaceChildren();
+  }, []);
+
+  const closeCheckout = useCallback(async () => {
+    if (checkoutBusy) return;
+
+    setCheckoutOpen(false);
+    setCheckoutItem(null);
+    setCheckoutNote("");
+    setSquareError("");
+    setSquareReady(false);
+    await cleanupSquareCard();
+  }, [checkoutBusy, cleanupSquareCard]);
+
+  useEffect(() => {
+    if (!checkoutOpen || !checkoutItem) return undefined;
+
+    let alive = true;
+
+    async function initSquare() {
+      if (squareInitRef.current) return;
+      squareInitRef.current = true;
+
+      try {
+        setSquareError("");
+        setSquareReady(false);
+
+        await cleanupSquareCard();
+        squareInitRef.current = true;
+
+        const squareCfg = await apiJsonOrThrow("/api/square/checkout/config", {
+          headers: buildHeaders(),
+        });
+
+        if (!squareCfg?.applicationId || !squareCfg?.locationId) {
+          throw new Error("Square config is missing applicationId or locationId.");
+        }
+
+        const squarePayments = await payments(squareCfg.applicationId, squareCfg.locationId);
+        const card = await squarePayments.card();
+
+        if (!alive) {
+          try {
+            await card.destroy?.();
+          } catch {}
+          return;
+        }
+
+        const el = document.getElementById("square-card-container");
+        if (el) el.replaceChildren();
+
+        await card.attach("#square-card-container");
+
+        if (!alive) {
+          try {
+            await card.destroy?.();
+          } catch {}
+          return;
+        }
+
+        squareCardRef.current = card;
+        setSquareReady(true);
+      } catch (e) {
+        console.error("[MusicPage] Square init error =>", e?.message || e);
+        if (alive) {
+          await cleanupSquareCard();
+          setSquareError(e?.message || "Square could not load.");
+          setSquareReady(false);
+        }
+      }
+    }
+
+    initSquare();
+
+    return () => {
+      alive = false;
+      cleanupSquareCard();
+    };
+  }, [checkoutOpen, checkoutItem, buildHeaders, cleanupSquareCard]);
+
   const stopTick = useCallback(() => {
     if (tickRef.current) {
       clearInterval(tickRef.current);
@@ -221,6 +329,7 @@ export default function MusicPage() {
 
   const stopCurrent = useCallback(async () => {
     stopTick();
+
     try {
       const a = audioRef.current;
       if (a) {
@@ -229,6 +338,7 @@ export default function MusicPage() {
         audioRef.current = null;
       }
     } catch {}
+
     setPlayingTrackId(null);
     setCurrentTrack(null);
     setIsPlaying(false);
@@ -239,9 +349,8 @@ export default function MusicPage() {
   const normalizeCatalogTracks = useCallback((arr) => {
     return (arr || []).map((t) => {
       const isOwned = typeof t.isOwned === "boolean" ? t.isOwned : false;
-      const isUnlocked =
-        typeof t.isUnlocked === "boolean" ? t.isUnlocked : isOwned;
-  
+      const isUnlocked = typeof t.isUnlocked === "boolean" ? t.isUnlocked : isOwned;
+
       return {
         ...t,
         isOwned,
@@ -253,9 +362,8 @@ export default function MusicPage() {
   const normalizeCatalogAlbums = useCallback((arr) => {
     return (arr || []).map((a) => {
       const isOwned = typeof a.isOwned === "boolean" ? a.isOwned : false;
-      const isUnlocked =
-        typeof a.isUnlocked === "boolean" ? a.isUnlocked : isOwned;
-  
+      const isUnlocked = typeof a.isUnlocked === "boolean" ? a.isUnlocked : isOwned;
+
       return {
         ...a,
         isOwned,
@@ -266,6 +374,7 @@ export default function MusicPage() {
 
   const reloadCatalog = useCallback(async () => {
     setErrorNote("");
+
     try {
       const data = await apiJsonOrThrow("/api/music/catalog", {
         headers: buildHeaders(),
@@ -299,7 +408,7 @@ export default function MusicPage() {
       window.removeEventListener("focus", onFocus);
       stopCurrent();
     };
-  }, [profileKey, checkoutSuccess, reloadCatalog, stopCurrent]);
+  }, [profileKey, reloadCatalog, stopCurrent]);
 
   const filteredTracks = useMemo(() => {
     if (!selectedAlbumId) return tracks;
@@ -320,113 +429,13 @@ export default function MusicPage() {
 
   const ensureAuthed = useCallback(() => {
     if (isAuthed && token) return true;
+
     navigate("/auth/login", {
       state: { nextRoute: `/world/${profileKey}/music`, nextState: { bgUrl } },
     });
+
     return false;
   }, [isAuthed, token, navigate, profileKey, bgUrl]);
-
-  const createCheckoutSession = useCallback(
-    async ({ itemType, itemId }) => {
-      if (!ensureAuthed()) throw new Error("Please log in to unlock.");
-
-      const body =
-        itemType === "track"
-          ? { itemType: "track", trackId: itemId }
-          : itemType === "album"
-          ? { itemType: "album", albumId: itemId }
-          : { itemType, itemId };
-
-      const json = await apiJsonOrThrow("/api/paypal/checkout/session", {
-        method: "POST",
-        headers: {
-          "x-profile-key": String(profileKey || ""),
-          Authorization: `Bearer ${String(token)}`,
-          ...(buyerUserId ? { "x-user-id": String(buyerUserId) } : {}),
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!json?.url) throw new Error("No checkout URL returned");
-
-      if (json?.provider === "paypal") {
-        localStorage.setItem(
-          `paypalPendingMusic:${profileKey}`,
-          JSON.stringify({
-            orderId: json.orderId || json.id || "",
-            pendingPurchaseId: json.pendingPurchaseId || "",
-            itemType,
-            itemId,
-            createdAt: Date.now(),
-          })
-        );
-      }
-
-      return String(json.url);
-    },
-    [ensureAuthed, profileKey, token, buyerUserId]
-  );
-
-  useEffect(() => {
-    if (!paypalCheckoutSuccess || !profileKey) return;
-
-    let alive = true;
-
-    (async () => {
-      const storageKey = `paypalPendingMusic:${profileKey}`;
-      const raw = localStorage.getItem(storageKey);
-
-      if (!raw) {
-        setCheckoutNote("PayPal returned successfully, but no pending checkout was found on this browser.");
-        return;
-      }
-
-      let pending = null;
-      try {
-        pending = JSON.parse(raw);
-      } catch {
-        pending = null;
-      }
-
-      const orderId = String(pending?.orderId || "").trim();
-      const pendingPurchaseId = String(pending?.pendingPurchaseId || "").trim();
-
-      if (!orderId) {
-        setCheckoutNote("PayPal returned successfully, but the order ID was missing.");
-        return;
-      }
-
-      try {
-        setCheckoutNote("Finalizing your PayPal purchase…");
-
-        await apiJsonOrThrow("/api/paypal/checkout/capture", {
-          method: "POST",
-          headers: buildHeaders(),
-          body: JSON.stringify({ orderId, pendingPurchaseId }),
-        });
-
-        localStorage.removeItem(storageKey);
-
-        if (!alive) return;
-        setCheckoutNote("Purchase complete. Your music is unlocked.");
-        await reloadCatalog();
-
-        navigate(location.pathname, {
-          replace: true,
-          state: location.state || {},
-        });
-      } catch (e) {
-        console.error("[MusicPage] PayPal capture error =>", e?.message || e);
-        if (alive) {
-          setCheckoutNote(e?.message || "PayPal payment completed, but we could not unlock this item yet.");
-        }
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [paypalCheckoutSuccess, profileKey, buildHeaders, reloadCatalog, navigate, location.pathname, location.state]);
 
   const claimFreeItem = useCallback(
     async ({ itemType, itemId }) => {
@@ -447,6 +456,52 @@ export default function MusicPage() {
     },
     [ensureAuthed, buildHeaders, reloadCatalog]
   );
+
+  const payWithSquare = useCallback(async () => {
+    if (!checkoutItem) return;
+
+    if (!squareCardRef.current) {
+      throw new Error("Square payment form is not ready yet.");
+    }
+
+    setCheckoutBusy(true);
+    setCheckoutNote("Checking card…");
+    setSquareError("");
+
+    try {
+      const tokenResult = await squareCardRef.current.tokenize();
+
+      if (tokenResult.status !== "OK") {
+        throw new Error(tokenResult.errors?.[0]?.message || "Card could not be verified.");
+      }
+
+      const body = { itemType: checkoutItem.itemType };
+
+      if (checkoutItem.trackId) body.trackId = checkoutItem.trackId;
+      if (checkoutItem.albumId) body.albumId = checkoutItem.albumId;
+
+      setCheckoutNote("Processing payment…");
+
+      await apiJsonOrThrow("/api/square/checkout/music", {
+        method: "POST",
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          ...body,
+          sourceId: tokenResult.token,
+        }),
+      });
+
+      setCheckoutNote("Purchase complete. Your music is unlocked.");
+      await reloadCatalog();
+
+      setCheckoutOpen(false);
+      setCheckoutItem(null);
+      setSquareReady(false);
+      await cleanupSquareCard();
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }, [checkoutItem, buildHeaders, reloadCatalog, cleanupSquareCard]);
 
   const startTrack = useCallback(
     async (track, preview = true) => {
@@ -483,6 +538,7 @@ export default function MusicPage() {
         stopTick();
         tickRef.current = setInterval(() => {
           if (!audioRef.current) return;
+
           const cur = Number(audioRef.current.currentTime || 0);
           setPositionSec(cur);
 
@@ -544,6 +600,7 @@ export default function MusicPage() {
       }
 
       const target = Math.max(0, Math.min(Number(sec || 0), max || 0));
+
       try {
         a.currentTime = target;
         setPositionSec(target);
@@ -552,12 +609,16 @@ export default function MusicPage() {
     [durationSec, isPreview, currentTrack]
   );
 
-  const seekBy = useCallback((delta) => {
-    seekTo(positionSec + delta);
-  }, [seekTo, positionSec]);
+  const seekBy = useCallback(
+    (delta) => {
+      seekTo(positionSec + delta);
+    },
+    [seekTo, positionSec]
+  );
 
   const effectiveDurationSec = useMemo(() => {
     if (isPreview && currentTrack) return Math.max(1, Number(currentTrack.previewSeconds || 30));
+
     return Math.max(
       0,
       durationSec || (currentTrack?.durationSeconds ? Number(currentTrack.durationSeconds) : 0)
@@ -573,44 +634,46 @@ export default function MusicPage() {
     async (track) => {
       if (!ensureAuthed()) return;
 
-      const ok = confirm(`Open checkout to unlock "${track.title}"?`);
+      const ok = confirm(
+        `Unlock "${track.title}" for ${formatPriceLabel(track.priceCents || 0, track.currency || "usd")}?`
+      );
       if (!ok) return;
 
-      try {
-        const url = await createCheckoutSession({
-          itemType: "track",
-          itemId: String(track._id),
-        });
-
-        window.location.href = url;
-      } catch (e) {
-        alert(e?.message || "Could not start checkout.");
-        console.error("[MusicPage] unlockTrack checkout error =>", e);
-      }
+      setCheckoutItem({
+        itemType: "track",
+        trackId: String(track._id),
+        title: track.title,
+        priceLabel: formatPriceLabel(track.priceCents || 0, track.currency || "usd"),
+      });
+      setCheckoutNote("");
+      setSquareError("");
+      setSquareReady(false);
+      setCheckoutOpen(true);
     },
-    [ensureAuthed, createCheckoutSession]
+    [ensureAuthed]
   );
 
   const unlockAlbum = useCallback(
     async (album) => {
       if (!ensureAuthed()) return;
 
-      const ok = confirm(`Open checkout to unlock album "${album.title}"?`);
+      const ok = confirm(
+        `Unlock album "${album.title}" for ${formatPriceLabel(album.priceCents || 0, album.currency || "usd")}?`
+      );
       if (!ok) return;
 
-      try {
-        const url = await createCheckoutSession({
-          itemType: "album",
-          itemId: String(album._id),
-        });
-
-        window.location.href = url;
-      } catch (e) {
-        alert(e?.message || "Could not start checkout.");
-        console.error("[MusicPage] unlockAlbum checkout error =>", e);
-      }
+      setCheckoutItem({
+        itemType: "album",
+        albumId: String(album._id),
+        title: album.title,
+        priceLabel: formatPriceLabel(album.priceCents || 0, album.currency || "usd"),
+      });
+      setCheckoutNote("");
+      setSquareError("");
+      setSquareReady(false);
+      setCheckoutOpen(true);
     },
-    [ensureAuthed, createCheckoutSession]
+    [ensureAuthed]
   );
 
   const addTrackToLibrary = useCallback(
@@ -657,7 +720,9 @@ export default function MusicPage() {
 
           <div className="ms-topCenter">
             <div className="ms-title">Music</div>
-            {!isAuthed ? <div className="ms-authHint">Sign in to unlock or add free tracks to your library.</div> : null}
+            {!isAuthed ? (
+              <div className="ms-authHint">Sign in to unlock or add free tracks to your library.</div>
+            ) : null}
           </div>
 
           <div className="ms-chip">
@@ -667,7 +732,60 @@ export default function MusicPage() {
         </div>
 
         {errorNote ? <div className="ms-error">{errorNote}</div> : null}
-        {checkoutNote ? <div className="ms-checkoutNote">{checkoutNote}</div> : null}
+        {checkoutOpen && checkoutItem ? (
+          <div className="ms-modalBackdrop" role="presentation" onClick={closeCheckout}>
+            <div
+              className="ms-checkoutModal"
+              role="dialog"
+              aria-modal="true"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="ms-checkoutTop">
+                <div>
+                  <div className="ms-checkoutEyebrow">Secure Checkout</div>
+                  <div className="ms-checkoutTitle">Unlock {checkoutItem.title}</div>
+                  <div className="ms-checkoutPrice">{checkoutItem.priceLabel}</div>
+                </div>
+
+                <button
+                  className="ms-modalClose"
+                  onClick={closeCheckout}
+                  disabled={checkoutBusy}
+                  aria-label="Close checkout"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="ms-squareBox">
+                <div className="ms-squareTitle">Card Details</div>
+                <div id="square-card-container" className="ms-squareCard" />
+                {!squareReady ? <div className="ms-squareHint">Loading secure payment…</div> : null}
+                {squareError ? <div className="ms-error">{squareError}</div> : null}
+              </div>
+
+              {checkoutNote ? <div className="ms-checkoutNote">{checkoutNote}</div> : null}
+
+              <button
+                className="ms-payBtn"
+                onClick={() => {
+                  payWithSquare().catch((e) => {
+                    setSquareError(e?.message || "Could not complete checkout.");
+                    setCheckoutNote("");
+                    console.error("[MusicPage] payWithSquare error =>", e);
+                  });
+                }}
+                disabled={!squareReady || checkoutBusy || !!squareError}
+              >
+                {!squareReady
+                  ? "Loading secure payment…"
+                  : checkoutBusy
+                    ? "Processing payment…"
+                    : `Pay securely • ${checkoutItem.priceLabel}`}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="ms-center">
@@ -700,11 +818,7 @@ export default function MusicPage() {
                         onClick={() => setSelectedAlbumId((prev) => (prev === a._id ? null : a._id))}
                       >
                         <div className="ms-albumArt">
-                          {a.coverImageUrl ? (
-                            <img src={a.coverImageUrl} alt="" />
-                          ) : (
-                            <div className="ms-albumArtPh">♫</div>
-                          )}
+                          {a.coverImageUrl ? <img src={a.coverImageUrl} alt="" /> : <div className="ms-albumArtPh">♫</div>}
                         </div>
 
                         <div className="ms-albumInfo">
@@ -772,11 +886,7 @@ export default function MusicPage() {
                     <div className={`ms-trackRow ${isThis ? "ms-trackRowActive" : ""}`} key={t._id}>
                       <div className="ms-trackLeft">
                         <div className="ms-trackArt">
-                          {t.coverImageUrl ? (
-                            <img src={t.coverImageUrl} alt="" />
-                          ) : (
-                            <div className="ms-trackArtPh">♫</div>
-                          )}
+                          {t.coverImageUrl ? <img src={t.coverImageUrl} alt="" /> : <div className="ms-trackArtPh">♫</div>}
                         </div>
 
                         <button
@@ -807,21 +917,13 @@ export default function MusicPage() {
                             ✓ In Library
                           </div>
                         ) : isFree ? (
-                          <button
-                            className="ms-libraryPill"
-                            onClick={() => addTrackToLibrary(t)}
-                            title="Add to Library"
-                          >
+                          <button className="ms-libraryPill" onClick={() => addTrackToLibrary(t)} title="Add to Library">
                             <span>＋</span>
                             <span className="ms-unlockWord">Add to Library</span>
                             <span className="ms-price">{price}</span>
                           </button>
                         ) : (
-                          <button
-                            className="ms-unlockPill"
-                            onClick={() => unlockTrack(t)}
-                            title="Unlock"
-                          >
+                          <button className="ms-unlockPill" onClick={() => unlockTrack(t)} title="Unlock">
                             <span className="ms-globe">🌐</span>
                             <span className="ms-unlockWord">Unlock</span>
                             <span className="ms-price">{price}</span>
@@ -844,7 +946,11 @@ export default function MusicPage() {
           <div className="ms-player">
             <div className="ms-playerTop">
               <div className="ms-playerArt">
-                {currentTrack.coverImageUrl ? <img src={currentTrack.coverImageUrl} alt="" /> : <div className="ms-playerArtPh">♫</div>}
+                {currentTrack.coverImageUrl ? (
+                  <img src={currentTrack.coverImageUrl} alt="" />
+                ) : (
+                  <div className="ms-playerArtPh">♫</div>
+                )}
               </div>
 
               <div className="ms-playerText">
@@ -901,7 +1007,8 @@ export default function MusicPage() {
             </div>
 
             <div className="ms-playerNote">
-              Tip: paid locked tracks use <span className="ms-noteStrong">Unlock</span> with PayPal. Free tracks can be added with <span className="ms-noteStrong">Add to Library</span>.
+              Tip: paid locked tracks use <span className="ms-noteStrong">Unlock</span> with Square. Free tracks can be added with{" "}
+              <span className="ms-noteStrong">Add to Library</span>.
             </div>
           </div>
         ) : null}
@@ -1028,6 +1135,110 @@ export default function MusicPage() {
           font-size: 12px;
           font-weight: 850;
         }
+        .ms-squareBox{
+          margin-top: 10px;
+          margin-bottom: 16px;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(0,0,0,0.38);
+          padding: 14px;
+          backdrop-filter: blur(14px);
+          -webkit-backdrop-filter: blur(14px);
+        }
+        .ms-squareTitle{
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: 0.8px;
+          text-transform: uppercase;
+          color: rgba(255,255,255,0.86);
+          margin-bottom: 10px;
+        }
+        .ms-squareCard{
+          min-height: 48px;
+        }
+        .ms-squareHint{
+          margin-top: 8px;
+          font-size: 12px;
+          color: rgba(255,255,255,0.68);
+        }
+        .ms-modalBackdrop{
+          position: fixed;
+          inset: 0;
+          z-index: 20;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding: 18px;
+          background: rgba(0,0,0,0.72);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+        .ms-checkoutModal{
+          width: min(460px, 100%);
+          border-radius: 24px;
+          border: 1px solid rgba(255,255,255,0.16);
+          background: linear-gradient(180deg, rgba(20,20,26,0.96), rgba(0,0,0,0.94));
+          box-shadow: 0 30px 100px rgba(0,0,0,0.65);
+          padding: 16px;
+        }
+        .ms-checkoutTop{
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+        .ms-checkoutEyebrow{
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 1px;
+          text-transform: uppercase;
+          color: rgba(0,255,255,0.92);
+        }
+        .ms-checkoutTitle{
+          margin-top: 4px;
+          font-size: 18px;
+          line-height: 1.15;
+          font-weight: 950;
+          color: rgba(255,255,255,0.96);
+        }
+        .ms-checkoutPrice{
+          margin-top: 6px;
+          font-size: 13px;
+          font-weight: 950;
+          color: rgba(255,255,255,0.72);
+        }
+        .ms-modalClose{
+          width: 34px;
+          height: 34px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.9);
+          cursor:pointer;
+          display:grid;
+          place-items:center;
+          flex: 0 0 auto;
+        }
+        .ms-modalClose:disabled{ opacity: 0.45; cursor:not-allowed; }
+        .ms-payBtn{
+          width: 100%;
+          height: 46px;
+          margin-top: 12px;
+          border: 0;
+          border-radius: 999px;
+          background: var(--cyan);
+          color: #020617;
+          font-size: 13px;
+          font-weight: 950;
+          cursor:pointer;
+          box-shadow: 0 16px 45px rgba(0,255,255,0.18);
+        }
+        .ms-payBtn:disabled{
+          opacity: 0.55;
+          cursor:not-allowed;
+          box-shadow: none;
+        }
         .ms-center{
           margin-top: 22px;
           min-height: 44vh;
@@ -1070,11 +1281,7 @@ export default function MusicPage() {
           -webkit-backdrop-filter: blur(10px);
         }
 
-        .ms-albums{
-          display:flex;
-          flex-direction: column;
-          gap: 12px;
-        }
+        .ms-albums{ display:flex; flex-direction: column; gap: 12px; }
         .ms-albumCard{
           width: 100%;
           border-radius: 18px;
@@ -1166,12 +1373,7 @@ export default function MusicPage() {
           white-space: nowrap;
         }
 
-        .ms-tracks{
-          display:flex;
-          flex-direction: column;
-          gap: 12px;
-          width: 100%;
-        }
+        .ms-tracks{ display:flex; flex-direction: column; gap: 12px; width: 100%; }
         .ms-trackRow{
           border-radius: 18px;
           border: 1px solid rgba(255,255,255,0.10);
@@ -1186,12 +1388,7 @@ export default function MusicPage() {
           gap: 14px;
         }
         .ms-trackRowActive{ border-color: rgba(0,255,255,0.34); }
-        .ms-trackLeft{
-          display:flex;
-          align-items:center;
-          gap: 12px;
-          min-width:0;
-        }
+        .ms-trackLeft{ display:flex; align-items:center; gap: 12px; min-width:0; }
         .ms-trackArt{
           width: 46px;
           height: 46px;
@@ -1322,12 +1519,7 @@ export default function MusicPage() {
           padding: 12px 12px 10px;
           z-index: 5;
         }
-        .ms-playerTop{
-          display:flex;
-          align-items:center;
-          gap: 10px;
-          margin-bottom: 8px;
-        }
+        .ms-playerTop{ display:flex; align-items:center; gap: 10px; margin-bottom: 8px; }
         .ms-playerArt{
           width: 44px;
           height: 44px;

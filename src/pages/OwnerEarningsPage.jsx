@@ -313,13 +313,13 @@ export default function OwnerEarningsPage() {
         </div>
 
         <div className="oe-card">
-          <div className="oe-cardLabel">PayPal Payout</div>
+          <div className="oe-cardLabel">Manual Payout</div>
           <div className="oe-cardValue oe-cardValueSmall">
             {loading ? "—" : payoutEmail || "Not set"}
           </div>
           {!loading ? (
             <div className={summary.payoutReady ? "oe-statusGood" : "oe-statusWarn"}>
-              {summary.payoutReady ? "Ready for payouts" : "Add PayPal email on Payment Info"}
+              {summary.payoutReady ? "Ready for payouts" : "Add payout info on Payment Info"}
             </div>
           ) : null}
         </div>

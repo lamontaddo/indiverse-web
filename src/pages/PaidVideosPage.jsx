@@ -136,6 +136,7 @@ export default function PaidVideosPage() {
 
       // ✅ critical: send x-user-id so backend can compute owned
       const headers = {
+        "x-profile-key": String(profileKey || ""),
         ...(userId ? { "x-user-id": userId } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       };

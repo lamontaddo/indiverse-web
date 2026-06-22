@@ -1,8 +1,8 @@
 // src/pages/OwnerHomePage.jsx ✅ FULL DROP-IN (Web)
 // Route: /world/:profileKey/owner/home
 //
-// ✅ Keeps owner PayPal payout info modal
-// ✅ Hydrates saved PayPal email on dashboard load and modal open
+// ✅ Keeps owner manual payout info modal
+// ✅ Hydrates saved payout info on dashboard load and modal open
 // ✅ Moves Payment Info + Withdraw into compact payout tabs
 // ✅ Keeps Earnings as a dashboard tile
 // ✅ Routes Earnings tile to /world/:profileKey/owner/earnings
@@ -14,6 +14,16 @@ import { ownerJsonWeb } from "../utils/ownerApi.web";
 
 const SPEED = 0.55;
 const AMP_BOOST = 1.1;
+
+const PAYOUT_METHODS = [
+  { key: "zelle", label: "Zelle", helper: "Enter the email or phone number connected to your Zelle." },
+  { key: "cashapp", label: "Cash App", helper: "Cash App cashtags should start with $." },
+  { key: "venmo", label: "Venmo", helper: "Venmo usernames should start with @." },
+  { key: "paypal", label: "PayPal", helper: "Enter the email connected to your PayPal account." },
+  { key: "apple_cash", label: "Apple Cash", helper: "Enter the phone number or Apple ID email connected to Apple Cash." },
+  { key: "chime", label: "Chime", helper: "Enter your Chime sign or payout email/phone." },
+  { key: "other", label: "Other", helper: "Enter clear payout instructions admin can use." },
+];
 
 const FALLBACK_OWNER_ITEMS = [
   { key: "earnings", label: "Earnings", ionicon: "cash", to: "ownerearnings", size: 136 },
@@ -97,6 +107,27 @@ function formatMoney(value) {
   }).format(num);
 }
 
+function getPayoutMethod(methodKey) {
+  return PAYOUT_METHODS.find((m) => m.key === methodKey) || PAYOUT_METHODS[1];
+}
+
+function normalizePayoutMethod(methodKey) {
+  const key = String(methodKey || "").trim().toLowerCase();
+  return PAYOUT_METHODS.some((m) => m.key === key) ? key : "cashapp";
+}
+
+function validatePayoutInfo(methodKey, value) {
+  const method = normalizePayoutMethod(methodKey);
+  const info = String(value || "").trim();
+
+  if (!info) return "Enter your payout information.";
+  if (method === "paypal" && !info.includes("@")) return "Enter a valid PayPal email address.";
+  if (method === "cashapp" && !info.startsWith("$")) return "Cash App cashtags should start with $.";
+  if (method === "venmo" && !info.startsWith("@")) return "Venmo usernames should start with @.";
+
+  return "";
+}
+
 export default function OwnerHomePage() {
   const navigate = useNavigate();
   const params = useParams();
@@ -127,6 +158,7 @@ export default function OwnerHomePage() {
   });
 
   const [paypalModalOpen, setPaypalModalOpen] = useState(false);
+  const [payoutMethod, setPayoutMethod] = useState("cashapp");
   const [paypalEmail, setPaypalEmail] = useState("");
   const [paypalSaving, setPaypalSaving] = useState(false);
 
@@ -190,7 +222,15 @@ export default function OwnerHomePage() {
 
       const summary = data?.summary || {};
 
-      const savedPayPalEmail = String(summary?.paypalPayoutEmail || summary?.paypalEmail || "")
+      const savedPayoutMethod = normalizePayoutMethod(summary?.payoutMethod || summary?.manualPayoutMethod || "cashapp");
+      const savedPayPalEmail = String(
+        summary?.payoutHandle ||
+          summary?.manualPayoutHandle ||
+          summary?.payoutInfo ||
+          summary?.paypalPayoutEmail ||
+          summary?.paypalEmail ||
+          ""
+      )
         .trim()
         .toLowerCase();
 
@@ -203,6 +243,8 @@ export default function OwnerHomePage() {
         paypalPayoutEmail: savedPayPalEmail,
         error: "",
       });
+
+      setPayoutMethod(savedPayoutMethod);
 
       if (savedPayPalEmail) {
         setPaypalEmail(savedPayPalEmail);
@@ -225,8 +267,24 @@ export default function OwnerHomePage() {
         profileKey,
       });
 
+      const method = normalizePayoutMethod(
+        data?.payoutMethod ||
+          data?.manualPayoutMethod ||
+          data?.paymentInfo?.payoutMethod ||
+          data?.paymentInfo?.manualPayoutMethod ||
+          data?.summary?.payoutMethod ||
+          data?.summary?.manualPayoutMethod ||
+          "cashapp"
+      );
+
       const email = String(
-        data?.paypalEmail ||
+        data?.payoutHandle ||
+          data?.manualPayoutHandle ||
+          data?.payoutInfo ||
+          data?.paymentInfo?.payoutHandle ||
+          data?.paymentInfo?.manualPayoutHandle ||
+          data?.paymentInfo?.payoutInfo ||
+          data?.paypalEmail ||
           data?.paypalPayoutEmail ||
           data?.paymentInfo?.paypalEmail ||
           data?.paymentInfo?.paypalPayoutEmail ||
@@ -237,6 +295,8 @@ export default function OwnerHomePage() {
         .trim()
         .toLowerCase();
 
+      setPayoutMethod(method);
+
       if (email) {
         setPaypalEmail(email);
         setEarningsSummary((s) => ({
@@ -246,7 +306,7 @@ export default function OwnerHomePage() {
         }));
       }
     } catch (err) {
-      console.warn("[OwnerHomePage] unable to load PayPal payment info", err?.message || err);
+      console.warn("[OwnerHomePage] unable to load payout info", err?.message || err);
     }
   }
 
@@ -343,9 +403,12 @@ export default function OwnerHomePage() {
   async function handleSavePayPalInfo() {
     if (!profileKey) return;
 
+    const method = normalizePayoutMethod(payoutMethod);
     const email = String(paypalEmail || "").trim().toLowerCase();
-    if (!email || !email.includes("@")) {
-      window.alert("Enter a valid PayPal email address.");
+    const validationError = validatePayoutInfo(method, email);
+
+    if (validationError) {
+      window.alert(validationError);
       return;
     }
 
@@ -355,22 +418,28 @@ export default function OwnerHomePage() {
       await ownerJsonWeb("/api/owner/paypal/payment-info", {
         method: "POST",
         profileKey,
-        body: JSON.stringify({ paypalEmail: email }),
+        body: JSON.stringify({
+          paypalEmail: email,
+          payoutMethod: method,
+          payoutHandle: email,
+          payoutInfo: email,
+        }),
       });
 
       setPaypalEmail(email);
+      setPayoutMethod(method);
       setEarningsSummary((s) => ({
         ...s,
         payoutReady: true,
         paypalPayoutEmail: email,
       }));
 
-      window.alert("PayPal payment info saved.");
+      window.alert("Payout info saved.");
       setPaypalModalOpen(false);
       await loadEarningsSummary();
       await loadPayPalPaymentInfo();
     } catch (err) {
-      window.alert(err?.message || "Unable to save PayPal payment info.");
+      window.alert(err?.message || "Unable to save payout info.");
     } finally {
       setPaypalSaving(false);
     }
@@ -384,7 +453,7 @@ export default function OwnerHomePage() {
     }
 
     if (!earningsSummary.payoutReady && !paypalEmail) {
-      window.alert("Add your PayPal payout email before requesting a withdrawal.");
+      window.alert("Add your payout info before requesting a withdrawal.");
       setPaypalModalOpen(true);
       return;
     }
@@ -399,7 +468,7 @@ export default function OwnerHomePage() {
     }
 
     const ok = window.confirm(
-      `Request withdrawal of ${formatMoney(earningsSummary.availableToWithdraw)} to ${earningsSummary.paypalPayoutEmail || "your PayPal email"}?`
+      `Request withdrawal of ${formatMoney(earningsSummary.availableToWithdraw)} to ${earningsSummary.paypalPayoutEmail || "your payout info"}?`
     );
 
     if (!ok) return;
@@ -468,7 +537,7 @@ export default function OwnerHomePage() {
         ? `Available to withdraw: ${formatMoney(earningsSummary.availableToWithdraw)}.`
         : earningsSummary.payoutReady
         ? "No balance available to withdraw right now."
-        : "Add your PayPal email so admin can send payouts.";
+        : "Add your payout info so admin can send manual payouts.";
 
 return (
   <div style={styles.page}>
@@ -502,7 +571,7 @@ return (
       {profileKey ? (
         <div style={styles.payoutPanel}>
           <div style={styles.payoutCopy}>
-            <span style={styles.stripeBarLabel}>PayPal Payouts</span>
+            <span style={styles.stripeBarLabel}>Manual Payouts</span>
             <span style={styles.stripeBarValue}>{stripeHint}</span>
             {!!earningsSummary.error ? <span style={styles.stripeBarError}>• {earningsSummary.error}</span> : null}
             {!!stripeStatus.error ? <span style={styles.stripeBarError}>• {stripeStatus.error}</span> : null}
@@ -517,7 +586,7 @@ return (
               }}
               disabled={!profileKey}
             >
-              Payment Info
+              Payout Info
             </button>
 
             <button
@@ -557,8 +626,8 @@ return (
           <div style={styles.modalCard}>
             <div style={styles.modalTop}>
               <div>
-                <div style={styles.modalTitle}>PayPal Payment Info</div>
-                <div style={styles.modalSub}>This is the email admin will use to send your payouts.</div>
+                <div style={styles.modalTitle}>Payout Info</div>
+                <div style={styles.modalSub}>Choose how you want to receive withdrawals. Admin will use this information to manually send your payout.</div>
               </div>
 
               <button className="oh-pill" onClick={() => setPaypalModalOpen(false)}>
@@ -566,15 +635,43 @@ return (
               </button>
             </div>
 
-            <label style={styles.modalLabel}>PayPal Email</label>
+            <label style={styles.modalLabel}>Payout Method</label>
+            <div style={styles.methodGrid}>
+              {PAYOUT_METHODS.map((method) => {
+                const active = payoutMethod === method.key;
+
+                return (
+                  <button
+                    key={method.key}
+                    className={`oh-methodChip ${active ? "oh-methodChipActive" : ""}`}
+                    type="button"
+                    onClick={() => setPayoutMethod(method.key)}
+                  >
+                    {method.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label style={{ ...styles.modalLabel, marginTop: 18 }}>Payout Information</label>
             <input
               value={paypalEmail}
               onChange={(e) => setPaypalEmail(e.target.value)}
-              placeholder={earningsSummary.paypalPayoutEmail || "you@example.com"}
+              placeholder={
+                earningsSummary.paypalPayoutEmail ||
+                (payoutMethod === "cashapp"
+                  ? "$yourcashtag"
+                  : payoutMethod === "venmo"
+                    ? "@yourusername"
+                    : payoutMethod === "paypal"
+                      ? "you@example.com"
+                      : "Email, phone, username, or instructions")
+              }
               style={styles.modalInput}
-              type="email"
+              type={payoutMethod === "paypal" ? "email" : "text"}
               autoFocus
             />
+            <div style={styles.modalHelper}>{getPayoutMethod(payoutMethod).helper}</div>
 
             <div style={styles.modalActions}>
               <button className="oh-pill" onClick={() => setPaypalModalOpen(false)} disabled={paypalSaving}>
@@ -582,7 +679,7 @@ return (
               </button>
 
               <button className="oh-pill" onClick={handleSavePayPalInfo} disabled={paypalSaving}>
-                {paypalSaving ? "Saving…" : "Save PayPal Info"}
+                {paypalSaving ? "Saving…" : "Save Payout Info"}
               </button>
             </div>
           </div>
@@ -804,6 +901,12 @@ const styles = {
     color: "rgba(203,213,225,0.85)",
     marginBottom: 8,
   },
+  methodGrid: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 4,
+  },
   modalInput: {
     width: "100%",
     height: 46,
@@ -814,6 +917,13 @@ const styles = {
     padding: "0 14px",
     outline: "none",
     fontWeight: 800,
+  },
+  modalHelper: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "rgba(203,213,225,0.74)",
+    fontWeight: 800,
+    lineHeight: "18px",
   },
   modalActions: {
     display: "flex",
@@ -897,6 +1007,28 @@ function css(accent) {
     opacity: 0.5;
     cursor: not-allowed;
     transform: none;
+  }
+
+  .oh-methodChip{
+    height: 38px;
+    border-radius: 999px;
+    padding: 0 15px;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(2,6,23,0.34);
+    color: rgba(255,255,255,0.88);
+    font-weight: 950;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    white-space: nowrap;
+    box-shadow: 0 12px 28px rgba(0,0,0,0.22);
+  }
+  .oh-methodChipActive{
+    border-color: ${hexToRgba(accent || "#818cf8", 0.52)};
+    background: ${hexToRgba(accent || "#818cf8", 0.88)};
+    color: #020617;
   }
 
   .oh-tile{

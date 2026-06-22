@@ -16,7 +16,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getProfileByKey } from "../services/profileRegistry";
 import { profileFetchRaw } from "../services/profileApi";
 
-
+import { payments } from "@square/web-sdk";
 const PREVIEW_LIMIT_MS = 30_000;
 
 function apiBase() {
@@ -220,45 +220,31 @@ function getMyDisplayName(token) {
   return getLocalDisplayName() || deriveDisplayNameFromBuyerUser() || deriveDisplayNameFromToken(token) || "User";
 }
 
-// ✅ PayPal checkout for paid videos
-async function createVideoCheckoutSession({
+// ✅ Square checkout for paid videos
+async function createVideoSquarePayment({
   profileKey,
   videoId,
+  sourceId,
   token = "",
   buyerUserId = "",
-  title = "Purchase",
-  currency = "usd",
-  priceCents = 0,
 }) {
   const headers = {
     "Content-Type": "application/json",
     "x-profile-key": String(profileKey || ""),
   };
+
   if (token) headers.Authorization = `Bearer ${String(token)}`;
   if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
 
-  const data = await apiJsonOrThrow(`/api/paypal/checkout/session`, {
+  return await apiJsonOrThrow(`/api/square/checkout/video`, {
     method: "POST",
     headers,
     body: JSON.stringify({
       profileKey: String(profileKey || ""),
-      itemType: "video",
       videoId: String(videoId),
-      title: String(title || "Purchase"),
-      currency: String(currency || "usd").toLowerCase(),
-      priceCents: Number(priceCents || 0),
+      sourceId: String(sourceId || ""),
     }),
   });
-
-  const url = cleanStr(data?.url);
-  if (!url) throw new Error("No checkout URL returned");
-
-  return {
-    url,
-    provider: cleanStr(data?.provider),
-    orderId: cleanStr(data?.orderId || data?.id),
-    pendingPurchaseId: cleanStr(data?.pendingPurchaseId),
-  };
 }
 
 export default function PaidVideoPlayerPage() {
@@ -320,6 +306,11 @@ export default function PaidVideoPlayerPage() {
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutErr, setCheckoutErr] = useState(null);
   const [checkoutNote, setCheckoutNote] = useState("");
+
+  // square 
+  const squareCardRef = useRef(null);
+  const [squareReady, setSquareReady] = useState(false);
+  const [squareError, setSquareError] = useState("");
 
   // --- social state ---
   const [liked, setLiked] = useState(() => unwrapBool(videoFromRoute, "liked", false));
@@ -412,30 +403,43 @@ export default function PaidVideoPlayerPage() {
   const loadPlayable = useCallback(
     async (m) => {
       if (!videoId) return;
-
+  
       try {
         previewStoppedRef.current = false;
         setLoadingPlay(true);
         setErr(null);
         setPlayUrl(null);
-
+  
+        const headers = {
+          "Content-Type": "application/json",
+          "x-profile-key": String(profileKey || ""),
+        };
+  
+        if (token) headers.Authorization = `Bearer ${String(token)}`;
+        if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+  
         const res = await profileFetchRaw(
           profileKey,
-          `/api/paid-videos/${encodeURIComponent(videoId)}/play?mode=${encodeURIComponent(m)}`
+          `/api/paid-videos/${encodeURIComponent(videoId)}/play?mode=${encodeURIComponent(m)}`,
+          {
+            method: "GET",
+            headers,
+          }
         );
+  
         const data = await readJsonSafe(res);
-
+  
         if (!res.ok) throw new Error((data && (data.error || data.message)) || "Playback unavailable");
-
+  
         if (data?.mode === "link") {
           const url = cleanStr(data?.externalUrl);
           if (url) window.open(url, "_blank", "noopener,noreferrer");
           throw new Error("This is a link video. Opened in a new tab.");
         }
-
+  
         const url = cleanStr(data?.url);
         if (!url) throw new Error("Missing playback URL");
-
+  
         setPlayUrl(url);
       } catch (e) {
         setErr(e?.message || "Playback unavailable");
@@ -444,7 +448,7 @@ export default function PaidVideoPlayerPage() {
         setLoadingPlay(false);
       }
     },
-    [profileKey, videoId]
+    [profileKey, videoId, token, buyerUserId]
   );
 
   useEffect(() => {
@@ -504,6 +508,68 @@ export default function PaidVideoPlayerPage() {
     });
     return false;
   }, [isAuthed, token, nav, profileKey, videoId, videoMeta]);
+
+  useEffect(() => {
+    if (!purchaseOpen || !isAuthed) return;
+  
+    let alive = true;
+  
+    async function initSquare() {
+      try {
+        setSquareError("");
+        setSquareReady(false);
+  
+        const el = document.getElementById("square-video-card-container");
+        if (el) el.innerHTML = "";
+  
+        const headers = {
+          "Content-Type": "application/json",
+          "x-profile-key": String(profileKey || ""),
+        };
+  
+        if (token) headers.Authorization = `Bearer ${String(token)}`;
+        if (buyerUserId) headers["x-user-id"] = String(buyerUserId);
+  
+        const squareCfg = await apiJsonOrThrow("/api/square/checkout/config", {
+          headers,
+        });
+  
+        if (!squareCfg?.applicationId || !squareCfg?.locationId) {
+          throw new Error("Square config is missing applicationId or locationId.");
+        }
+  
+        const squarePayments = await payments(squareCfg.applicationId, squareCfg.locationId);
+        const card = await squarePayments.card();
+  
+        await card.attach("#square-video-card-container");
+  
+        if (!alive) return;
+  
+        squareCardRef.current = card;
+        setSquareReady(true);
+      } catch (e) {
+        console.error("[PaidVideoPlayerPage] Square init error =>", e?.message || e);
+        if (alive) {
+          setSquareError(e?.message || "Square could not load.");
+          setSquareReady(false);
+        }
+      }
+    }
+  
+    initSquare();
+  
+    return () => {
+      alive = false;
+  
+      try {
+        if (squareCardRef.current?.destroy) {
+          squareCardRef.current.destroy();
+        }
+      } catch {}
+  
+      squareCardRef.current = null;
+    };
+  }, [purchaseOpen, isAuthed, profileKey, token, buyerUserId]);
 
 
   useEffect(() => {
@@ -580,45 +646,54 @@ export default function PaidVideoPlayerPage() {
   const startCheckout = useCallback(async () => {
     if (!videoId || checkoutBusy) return;
     if (!ensureAuthed()) return;
-
+  
     try {
       setCheckoutBusy(true);
       setCheckoutErr(null);
-
-      const effectiveTitle = cleanStr(videoMeta?.title) || "Purchase";
-      const effectiveCurrency = String(videoMeta?.currency || "usd").toLowerCase();
-      const effectivePriceCents = Number(videoMeta?.priceCents || 0);
-
-      const checkout = await createVideoCheckoutSession({
+      setCheckoutNote("Checking card…");
+  
+      if (!squareCardRef.current) {
+        throw new Error("Square payment form is not ready yet.");
+      }
+  
+      const tokenResult = await squareCardRef.current.tokenize();
+  
+      if (tokenResult.status !== "OK") {
+        throw new Error(tokenResult.errors?.[0]?.message || "Card could not be verified.");
+      }
+  
+      setCheckoutNote("Processing payment…");
+  
+      await createVideoSquarePayment({
         profileKey,
         videoId,
+        sourceId: tokenResult.token,
         token,
         buyerUserId: buyerUserId || "",
-        title: effectiveTitle,
-        currency: effectiveCurrency,
-        priceCents: effectivePriceCents,
       });
-
-      if (checkout?.provider === "paypal") {
-        localStorage.setItem(
-          `paypalPendingVideo:${profileKey}:${videoId}`,
-          JSON.stringify({
-            orderId: checkout.orderId || "",
-            pendingPurchaseId: checkout.pendingPurchaseId || "",
-            videoId,
-            createdAt: Date.now(),
-          })
-        );
-      }
-
-      window.location.href = checkout.url;
+  
+      setCheckoutNote("Purchase complete. Full video unlocked.");
+      setPurchaseOpen(false);
+  
+      await refreshVideoMeta();
+      setMode("full");
+      await loadPlayable("full");
     } catch (e) {
       setCheckoutErr(e?.message || "Checkout failed");
+      setCheckoutNote("");
     } finally {
       setCheckoutBusy(false);
     }
-  }, [buyerUserId, checkoutBusy, ensureAuthed, profileKey, token, videoId, videoMeta]);
-
+  }, [
+    buyerUserId,
+    checkoutBusy,
+    ensureAuthed,
+    profileKey,
+    token,
+    videoId,
+    refreshVideoMeta,
+    loadPlayable,
+  ]);
   /* ---------------- preview enforcement ---------------- */
 
   const onTimeUpdate = useCallback(() => {
@@ -1017,51 +1092,60 @@ export default function PaidVideoPlayerPage() {
       </div>
 
       {purchaseOpen ? (
-        <div style={S.modalOverlay} onMouseDown={() => setPurchaseOpen(false)}>
-          <div style={S.modal} onMouseDown={(e) => e.stopPropagation()}>
-            <div style={S.modalTop}>
-              <div style={{ minWidth: 0 }}>
-                <div style={S.modalTitle}>Unlock full video</div>
-                <div style={S.modalSub} title={title}>
-                  {title}
-                </div>
-              </div>
-              <button style={S.modalClose} onClick={() => setPurchaseOpen(false)} aria-label="Close">
-                ✕
-              </button>
-            </div>
-
-            <div style={S.modalBody}>
-              <div style={S.modalMsg}>Your preview ended. Purchase full access to keep watching.</div>
-
-              {!isAuthed ? (
-                <div style={S.modalHint}>
-                  You must sign in first to purchase. Click <b>Buy</b> and you’ll be sent to login.
-                </div>
-              ) : null}
-
-              {checkoutErr ? <div style={S.modalErr}>{checkoutErr}</div> : null}
-              {checkoutNote ? <div style={S.modalNote}>{checkoutNote}</div> : null}
-
-              <div style={S.modalRow}>
-                <button
-                  onClick={startCheckout}
-                  style={{ ...S.primaryBtn, ...(checkoutBusy ? S.primaryBtnBusy : {}) }}
-                  disabled={checkoutBusy}
-                >
-                  {checkoutBusy ? "Redirecting…" : `Buy (${priceLabel})`}
-                </button>
-
-                <button onClick={() => setPurchaseOpen(false)} style={S.secondaryBtn} disabled={checkoutBusy}>
-                  Not now
-                </button>
-              </div>
-
-              <div style={S.modalHint}>Secure checkout via PayPal.</div>
-            </div>
+  <div style={S.modalOverlay} onMouseDown={() => setPurchaseOpen(false)}>
+    <div style={S.modal} onMouseDown={(e) => e.stopPropagation()}>
+      <div style={S.modalTop}>
+        <div style={{ minWidth: 0 }}>
+          <div style={S.modalTitle}>Unlock full video</div>
+          <div style={S.modalSub} title={title}>
+            {title}
           </div>
         </div>
-      ) : null}
+        <button style={S.modalClose} onClick={() => setPurchaseOpen(false)} aria-label="Close">
+          ✕
+        </button>
+      </div>
+
+      <div style={S.modalBody}>
+        <div style={S.modalMsg}>Your preview ended. Purchase full access to keep watching.</div>
+
+        {!isAuthed ? (
+          <div style={S.modalHint}>
+            You must sign in first to purchase. Click <b>Buy</b> and you’ll be sent to login.
+          </div>
+        ) : null}
+
+{isAuthed ? (
+  <div style={S.squareBox}>
+    <div style={S.squareTitle}>Secure Card Payment</div>
+    <div id="square-video-card-container" style={S.squareCard} />
+    {!squareReady ? <div style={S.modalHint}>Loading Square…</div> : null}
+    {squareError ? <div style={S.modalErr}>{squareError}</div> : null}
+  </div>
+) : null}
+
+        {checkoutErr ? <div style={S.modalErr}>{checkoutErr}</div> : null}
+        {checkoutNote ? <div style={S.modalNote}>{checkoutNote}</div> : null}
+
+        <div style={S.modalRow}>
+          <button
+            onClick={startCheckout}
+            style={{ ...S.primaryBtn, ...(checkoutBusy ? S.primaryBtnBusy : {}) }}
+            disabled={checkoutBusy || (isAuthed && !squareReady)}
+                      >
+            {checkoutBusy ? "Processing…" : `Buy (${priceLabel})`}
+          </button>
+
+          <button onClick={() => setPurchaseOpen(false)} style={S.secondaryBtn} disabled={checkoutBusy}>
+            Not now
+          </button>
+        </div>
+
+        <div style={S.modalHint}>Secure checkout via Square.</div>
+      </div>
+    </div>
+  </div>
+) : null}
 
       {isLocked ? <div style={S.lockNote}>Preview is limited to 30 seconds.</div> : null}
 
@@ -1573,6 +1657,25 @@ const S = {
     fontWeight: 900,
     fontSize: 12,
     textAlign: "center",
+  },
+  squareBox: {
+    marginTop: 12,
+    marginBottom: 10,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.05)",
+    padding: 12,
+  },
+  squareTitle: {
+    fontSize: 12,
+    fontWeight: 950,
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    color: "rgba(255,255,255,0.86)",
+    marginBottom: 10,
+  },
+  squareCard: {
+    minHeight: 48,
   },
 };
 
