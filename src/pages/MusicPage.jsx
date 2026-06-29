@@ -809,7 +809,7 @@ export default function MusicPage() {
                     const price = formatPriceLabel(a.priceCents || 0, a.currency || "usd");
                     const selected = selectedAlbumId === a._id;
                     const isFree = Number(a.priceCents || 0) <= 0;
-                    const owned = isAuthed && (!!a.isOwned || !!a.isUnlocked);
+                    const owned = isAuthed && !!a.isOwned;
 
                     return (
                       <button
@@ -872,9 +872,9 @@ export default function MusicPage() {
               <div className="ms-sectionTitle">Tracks{currentAlbumLabel ? ` • ${currentAlbumLabel}` : ""}</div>
 
               <div className="ms-tracks">
-                {filteredTracks.map((t) => {
-                  const owned = isAuthed && (!!t.isOwned || !!t.isUnlocked);
-                  const isFree = Number(t.priceCents || 0) <= 0;
+              {filteredTracks.map((t) => {
+                const owned = isAuthed && !!t.isOwned;
+                const isFree = Number(t.priceCents || 0) <= 0;
                   const price = formatPriceLabel(t.priceCents || 0, t.currency || "usd");
                   const isThis = playingTrackId === t._id;
 
