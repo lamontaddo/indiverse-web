@@ -809,7 +809,7 @@ export default function MusicPage() {
                     const price = formatPriceLabel(a.priceCents || 0, a.currency || "usd");
                     const selected = selectedAlbumId === a._id;
                     const isFree = Number(a.priceCents || 0) <= 0;
-                    const owned = !!a.isOwned || !!a.isUnlocked;
+                    const owned = isAuthed && (!!a.isOwned || !!a.isUnlocked);
 
                     return (
                       <button
@@ -873,7 +873,7 @@ export default function MusicPage() {
 
               <div className="ms-tracks">
                 {filteredTracks.map((t) => {
-                  const owned = !!t.isOwned || !!t.isUnlocked;
+                  const owned = isAuthed && (!!t.isOwned || !!t.isUnlocked);
                   const isFree = Number(t.priceCents || 0) <= 0;
                   const price = formatPriceLabel(t.priceCents || 0, t.currency || "usd");
                   const isThis = playingTrackId === t._id;
@@ -893,10 +893,10 @@ export default function MusicPage() {
                           className={`ms-playBtn ${isThis ? "ms-playBtnActive" : ""}`}
                           onClick={() => {
                             if (isThis && audioRef.current) togglePlayPause();
-                            else startTrack(t, !t.isUnlocked);
+                            else startTrack(t, !(isAuthed && t.isUnlocked));
                           }}
                           aria-label="Play/Pause"
-                          title={t.isUnlocked ? "Play" : "Play preview"}
+                          title={isAuthed && t.isUnlocked ? "Play" : "Play preview"}
                         >
                           {playIcon}
                         </button>
@@ -930,8 +930,8 @@ export default function MusicPage() {
                           </button>
                         )}
 
-                        <div className={`ms-badge ${t.isUnlocked ? "ms-badgeOwned" : ""}`}>
-                          {t.isUnlocked ? "Full Access" : "30s Preview"}
+                        <div className={`ms-badge ${isAuthed && t.isUnlocked ? "ms-badgeOwned" : ""}`}>
+                          {isAuthed && t.isUnlocked ? "Full Access" : "30s Preview"}
                         </div>
                       </div>
                     </div>
