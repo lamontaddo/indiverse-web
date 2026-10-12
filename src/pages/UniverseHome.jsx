@@ -151,13 +151,11 @@ function useLongPress(callback, ms = 5000) {
   );
 }
 
+
 const IconMedia = memo(function IconMedia({ mod }) {
   const videoRef = useRef(null);
   const remoteUrl = mod?.assets?.iconUrl || '';
 
-  // ✅ iPhone/Safari: force the video to try playing after mount/load.
-  // Safari often shows the big play button unless the element is muted + playsInline
-  // and play() is triggered after metadata is ready.
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !isVideoUrl(remoteUrl)) return;
@@ -165,33 +163,37 @@ const IconMedia = memo(function IconMedia({ mod }) {
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
-    video.setAttribute('muted', '');
-    video.setAttribute('playsinline', '');
-    video.setAttribute('webkit-playsinline', '');
 
-    const tryPlay = async () => {
-      try {
-        video.currentTime = video.currentTime || 0.001;
-        await video.play();
-      } catch (e) {
-        console.log('Icon video autoplay blocked:', mod?.key || mod?.label, e?.message);
+    const handleCanPlay = () => {
+      if (video.paused) {
+        video.play().catch((error) => {
+          console.log(
+            'Icon video autoplay blocked:',
+            mod?.key || mod?.label,
+            error?.message
+          );
+        });
       }
     };
 
-    tryPlay();
-    video.addEventListener('loadedmetadata', tryPlay);
-    video.addEventListener('canplay', tryPlay);
+    video.addEventListener('canplay', handleCanPlay);
+
+    // Handle videos that are already ready.
+    if (video.readyState >= 3) {
+      handleCanPlay();
+    }
 
     return () => {
-      video.removeEventListener('loadedmetadata', tryPlay);
-      video.removeEventListener('canplay', tryPlay);
+      video.removeEventListener('canplay', handleCanPlay);
     };
   }, [remoteUrl, mod?.key, mod?.label]);
 
   if (!remoteUrl) {
     return (
       <div className="iconFallback">
-        <span className="iconLetter">{(mod?.label || '?').charAt(0)}</span>
+        <span className="iconLetter">
+          {(mod?.label || '?').charAt(0)}
+        </span>
       </div>
     );
   }
@@ -199,6 +201,7 @@ const IconMedia = memo(function IconMedia({ mod }) {
   if (isVideoUrl(remoteUrl)) {
     return (
       <video
+        key={remoteUrl}
         ref={videoRef}
         className="iconMedia"
         src={remoteUrl}
@@ -206,7 +209,6 @@ const IconMedia = memo(function IconMedia({ mod }) {
         defaultMuted
         loop
         playsInline
-        webkit-playsinline="true"
         autoPlay
         preload="auto"
         controls={false}
@@ -217,15 +219,25 @@ const IconMedia = memo(function IconMedia({ mod }) {
   }
 
   if (isImageUrl(remoteUrl)) {
-    return <img className="iconMedia" src={remoteUrl} alt={mod?.label || 'icon'} loading="lazy" />;
+    return (
+      <img
+        className="iconMedia"
+        src={remoteUrl}
+        alt={mod?.label || 'icon'}
+        loading="lazy"
+      />
+    );
   }
 
   return (
     <div className="iconFallback">
-      <span className="iconLetter">{(mod?.label || '?').charAt(0)}</span>
+      <span className="iconLetter">
+        {(mod?.label || '?').charAt(0)}
+      </span>
     </div>
   );
 });
+
 
 // ✅ NEW: read user from localStorage (no extra API call)
 function readBuyerUser() {
