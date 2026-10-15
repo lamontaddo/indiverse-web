@@ -144,7 +144,12 @@ export default function PortfolioPage() {
                 onClick={() => openViewer(it)}
                 title="Open"
               >
-                <img src={it.url} alt="" style={styles.img} loading="lazy" />
+                <img
+  src={it.thumbnailUrl || it.url}
+  alt=""
+  style={styles.img}
+  loading="lazy"
+/>
               </button>
             ))}
           </div>
