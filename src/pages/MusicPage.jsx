@@ -75,7 +75,10 @@ function apiBase() {
   return String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
 }
 
-async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {}) {
+async function apiJsonOrThrow(
+  path,
+  { method = "GET", headers = {}, body } = {}
+) {
   const base = apiBase();
   const url = `${base}${path}`;
 
@@ -94,17 +97,33 @@ async function apiJsonOrThrow(path, { method = "GET", headers = {}, body } = {})
 
   const text = await res.text().catch(() => "");
 
+  let data = null;
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+
   if (!res.ok) {
-    throw new Error(`${method} ${path} failed (${res.status}): ${text || res.statusText}`);
+    const message =
+      typeof data?.error === "string" && data.error.trim()
+        ? data.error
+        : res.status >= 500
+          ? "Something went wrong. Please try again later."
+          : "Your request could not be completed. Please try again.";
+
+    const error = new Error(message);
+
+    error.status = res.status;
+    error.code = data?.code || null;
+
+    throw error;
   }
 
-  if (!text) return {};
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
-  }
+  return data || {};
 }
 
 async function fetchRemoteConfig({ url = DEFAULT_REMOTE_CONFIG_URL, timeoutMs = 9000 } = {}) {
@@ -805,22 +824,25 @@ export default function MusicPage() {
               {checkoutNote ? <div className="ms-checkoutNote">{checkoutNote}</div> : null}
 
               <button
-                className="ms-payBtn"
-                onClick={() => {
-                  payWithSquare().catch((e) => {
-                    setSquareError(e?.message || "Could not complete checkout.");
-                    setCheckoutNote("");
-                    console.error("[MusicPage] payWithSquare error =>", e);
-                  });
-                }}
-                disabled={!squareReady || checkoutBusy || !!squareError}
-              >
-                {!squareReady
-                  ? "Loading secure payment…"
-                  : checkoutBusy
-                    ? "Processing payment…"
-                    : `Pay securely • ${checkoutItem.priceLabel}`}
-              </button>
+  className="ms-payBtn"
+  onClick={() => {
+    payWithSquare().catch((e) => {
+      setSquareError(
+        e?.message ||
+          "We couldn't complete your payment. Please try again."
+      );
+      setCheckoutNote("");
+      console.error("[MusicPage] payWithSquare error =>", e);
+    });
+  }}
+  disabled={!squareReady || checkoutBusy}
+>
+  {!squareReady
+    ? "Loading secure payment…"
+    : checkoutBusy
+      ? "Processing payment…"
+      : `Pay securely • ${checkoutItem.priceLabel}`}
+</button>
             </div>
           </div>
         ) : null}
