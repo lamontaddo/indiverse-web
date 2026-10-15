@@ -55,6 +55,22 @@ function decodeJwtUserId(jwtToken) {
   return null;
 }
 
+function isJwtExpired(jwtToken) {
+  if (!jwtToken) return false;
+
+  const payload = decodeJwtPayload(jwtToken);
+
+  // An unreadable token should never count as a valid session.
+  if (!payload) return true;
+
+  const exp = Number(payload.exp);
+
+  // Existing buyer JWTs should have an expiration.
+  if (!Number.isFinite(exp) || exp <= 0) return true;
+
+  return Date.now() >= exp * 1000;
+}
+
 function apiBase() {
   return String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
 }
@@ -143,7 +159,8 @@ export default function MusicPage() {
   const profileKey = useMemo(() => cleanKey(paramsProfileKey) || "lamont", [paramsProfileKey]);
 
   const [token, setToken] = useState(() => localStorage.getItem("buyerToken") || "");
-  const isAuthed = !!token;
+  const isAuthed = !!token && !isJwtExpired(token);
+  const sessionExpired = !!token && isJwtExpired(token);
   const buyerUserId = useMemo(() => decodeJwtUserId(token), [token]);
 
   const [cfg, setCfg] = useState(null);
@@ -209,12 +226,22 @@ export default function MusicPage() {
 
   const buildHeaders = useCallback(
     (extra = {}) => {
-      const h = { "x-profile-key": String(profileKey || ""), ...extra };
-      if (token) h.Authorization = `Bearer ${token}`;
-      if (buyerUserId) h["x-user-id"] = String(buyerUserId);
+      const h = {
+        "x-profile-key": String(profileKey || ""),
+        ...extra,
+      };
+  
+      if (isAuthed && token) {
+        h.Authorization = `Bearer ${token}`;
+      }
+  
+      if (isAuthed && buyerUserId) {
+        h["x-user-id"] = String(buyerUserId);
+      }
+  
       return h;
     },
-    [profileKey, token, buyerUserId]
+    [profileKey, token, buyerUserId, isAuthed]
   );
 
   useEffect(() => {
@@ -429,13 +456,20 @@ export default function MusicPage() {
 
   const ensureAuthed = useCallback(() => {
     if (isAuthed && token) return true;
-
+  
+    if (sessionExpired) {
+      alert("Your session has expired. Please sign in again to access your library.");
+    }
+  
     navigate("/auth/login", {
-      state: { nextRoute: `/world/${profileKey}/music`, nextState: { bgUrl } },
+      state: {
+        nextRoute: `/world/${profileKey}/music`,
+        nextState: { bgUrl },
+      },
     });
-
+  
     return false;
-  }, [isAuthed, token, navigate, profileKey, bgUrl]);
+  }, [isAuthed, sessionExpired, token, navigate, profileKey, bgUrl]);
 
   const claimFreeItem = useCallback(
     async ({ itemType, itemId }) => {
@@ -721,8 +755,12 @@ export default function MusicPage() {
           <div className="ms-topCenter">
             <div className="ms-title">Music</div>
             {!isAuthed ? (
-              <div className="ms-authHint">Sign in to unlock or add free tracks to your library.</div>
-            ) : null}
+  <div className="ms-authHint">
+    {sessionExpired
+      ? "Your session has expired. Please sign in again to access your library."
+      : "Sign in to unlock or add free tracks to your library."}
+  </div>
+) : null}
           </div>
 
           <div className="ms-chip">
