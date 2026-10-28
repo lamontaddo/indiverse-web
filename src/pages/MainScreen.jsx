@@ -197,6 +197,7 @@ function ionToEmoji(name = '') {
     if (k.includes('person')) return '👤';
     if (k.includes('people')) return '👥';
     if (k.includes('musical') || k.includes('music')) return '🎵';
+    if (k.includes('book')) return '📚';
     if (k.includes('video')) return '🎬';
     if (k.includes('shirt')) return '👕';
     if (k.includes('chat')) return '💬';
@@ -224,12 +225,17 @@ function ionToEmoji(name = '') {
       .replace(/\s+/g, '')
       .replace(/[_]/g, '');
   
-    const state = { profileKey, bgUrl };
-  
-    // ✅ PAID VIDEOS (explicit + stable)
-    if (k === 'paidvideos' || k === 'paidvideo') {
-      return { path: `/world/${profileKey}/paidvideos`, state };
-    }
+      const state = { profileKey, bgUrl };
+
+      // ✅ BOOKS
+      if (k === 'books' || k === 'book') {
+        return { path: `/world/${profileKey}/books`, state };
+      }
+      
+      // ✅ PAID VIDEOS (explicit + stable)
+      if (k === 'paidvideos' || k === 'paidvideo') {
+        return { path: `/world/${profileKey}/paidvideos`, state };
+      }
   
     // ✅ PRODUCTS
     if (['products', 'product', 'productscreen', 'shop', 'store'].includes(k)) {
