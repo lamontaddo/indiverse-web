@@ -70,6 +70,9 @@ import PaidVideosPage from "./pages/PaidVideosPage.jsx";
 import PaidVideoPlayerPage from "./pages/PaidVideoPlayerPage.jsx";
 import OwnerPaidVideosPage from "./pages/OwnerPaidVideosPage.jsx";
 import OwnerEarningsPage from "./pages/OwnerEarningsPage.jsx";
+// Books 
+import OwnerBooksPage from "./pages/OwnerBooksPage";
+import BooksPage from "./pages/BooksPage";
 
 import AdminWithdrawalsPage from "./pages/AdminWithdrawalsPage.jsx";
 
@@ -203,7 +206,7 @@ export default function App() {
           <Route path="/world/:profileKey/cart" element={<CartPage />} />
           <Route path="/world/:profileKey/portfolio" element={<PortfolioPage />} />
           <Route path="/world/:profileKey/portfolio/view" element={<PortfolioViewerPage />} />
-
+          <Route path="/world/:profileKey/books" element={<BooksPage />} />
           {/* ✅ CONSULTATION (public form submissions) */}
           <Route path="/world/:profileKey/flowerorders" element={<FlowerOrdersPage />} />
 
@@ -228,7 +231,7 @@ export default function App() {
           <Route path="/world/:profileKey/owner/fashion" element={<OwnerFashionPage />} />
           <Route path="/world/:profileKey/owner/music" element={<OwnerMusicPage />} />
           <Route path="/world/:profileKey/owner/portfolio" element={<OwnerPortfolioPage />} />
-
+          <Route path="/world/:profileKey/owner/books" element={<OwnerBooksPage />}/>
           {/* ✅ Owner Orders (web) */}
           <Route path="/world/:profileKey/owner/orders" element={<OwnerOrdersPage />} />
           <Route path="/world/:profileKey/owner/paid-videos"element={<OwnerPaidVideosPage />} />

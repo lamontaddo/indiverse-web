@@ -64,7 +64,9 @@ function ionToEmoji(name = "", tile = null) {
   const key = String(tile?.key || "").toLowerCase();
   const to = String(tile?.to || "").toLowerCase();
   const label = String(tile?.label || "").toLowerCase();
-
+  if (k.includes("book") || key === "books" || to.includes("books")) {
+    return "📚";
+  }
   if (key === "messages" || to.includes("messages") || label === "messages") return "🗨️";
   if (key === "flowerorders" || to.includes("consultation") || to.includes("flowerorders") || label.includes("flower")) return "🌹";
   if (key === "stripepayouts") return "💳";
@@ -373,6 +375,7 @@ export default function OwnerHomePage() {
     ownermessages: "messages",
     ownerplaylist: "playlist",
     ownermusic: "music",
+    ownerbooks: "books",
     ownerfashion: "fashion",
     ownervideos: "videos",
     ownerproducts: "products",
@@ -391,6 +394,7 @@ export default function OwnerHomePage() {
     "messages",
     "playlist",
     "music",
+    "books",
     "products",
     "orders",
     "portfolio",
