@@ -635,10 +635,10 @@ import React, {
                         <p className="books-author">By {book.author}</p>
   
                         {book.description && (
-                          <p className="books-description">
-                            {book.description}
-                          </p>
-                        )}
+  <p className="books-description">
+    {book.description}
+  </p>
+)}
   
                         {owned && (
                           <span className="books-owned-label">
@@ -979,12 +979,12 @@ import React, {
             font-size: 13px;
           }
           .books-description {
-            color: #cbd5e1;
-            font-size: 13px;
-            line-height: 1.7;
-            margin: 0 0 20px;
-            overflow-wrap: anywhere;
-          }
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
           .books-owned-label {
             color: #86efac;
             font-size: 11px;
